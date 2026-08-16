@@ -7,28 +7,33 @@ import { revalidatePath } from "next/cache";
 const JUDGE_AUTH_DOMAIN = process.env.JUDGE_AUTH_DOMAIN || "judge.hu.local";
 
 export async function logInJudge(prevState, formData) {
-  const judgeCode = formData.get("judgeCode")?.trim().toLowerCase();
-  const password = formData.get("password");
+  try {
+    const judgeCode = formData.get("judgeCode")?.trim().toLowerCase();
+    const password = formData.get("password");
 
-  if (!judgeCode || !password) return { error: "Enter your judge ID and password." };
+    if (!judgeCode || !password) return { error: "Enter your judge ID and password." };
 
-  const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword({
-    email: `${judgeCode}@${JUDGE_AUTH_DOMAIN}`,
-    password,
-  });
+    const supabase = await createClient();
+    const { error } = await supabase.auth.signInWithPassword({
+      email: `${judgeCode}@${JUDGE_AUTH_DOMAIN}`,
+      password,
+    });
 
-  if (error) return { error: "Invalid judge ID or password." };
-  
-  const sessionId = crypto.randomUUID();
-  
-  // Save session ID to user_metadata
-  await supabase.auth.updateUser({
-    data: { current_session: sessionId }
-  });
-  
-  const { cookies } = await import("next/headers");
-  cookies().set('judge_session', sessionId, { httpOnly: true, secure: process.env.NODE_ENV === 'production', path: '/' });
+    if (error) return { error: "Invalid judge ID or password." };
+    
+    const sessionId = crypto.randomUUID();
+    
+    // Save session ID to user_metadata
+    await supabase.auth.updateUser({
+      data: { current_session: sessionId }
+    });
+    
+    const { cookies } = await import("next/headers");
+    cookies().set('judge_session', sessionId, { httpOnly: true, secure: process.env.NODE_ENV === 'production', path: '/' });
+  } catch (err) {
+    console.error("logInJudge error:", err);
+    return { error: err.message || "Database error. Please check Vercel environment variables and redeploy." };
+  }
 
   redirect("/judge/dashboard");
 }
