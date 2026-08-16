@@ -5,8 +5,16 @@ import LandingClient from "@/components/landing/LandingClient";
 const JUDGE_AUTH_DOMAIN = process.env.JUDGE_AUTH_DOMAIN || "judge.hu.local";
 
 export default async function Home() {
-  const supabase = await createClient();
-  const { data: userData } = await supabase.auth.getUser();
+  let userData = null;
+  
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.auth.getUser();
+    if (!error) userData = data;
+  } catch (err) {
+    console.error("Home page Supabase error:", err);
+    // Ignore error, just show the landing page
+  }
 
   if (userData?.user) {
     const email = userData.user.email || "";
