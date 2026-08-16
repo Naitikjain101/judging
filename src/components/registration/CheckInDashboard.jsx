@@ -1,0 +1,274 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { searchTeams, checkInTeam, undoCheckIn } from "@/app/registration/actions";
+import { toast } from "sonner";
+import { Search, CheckCircle, Clock, Undo, QrCode, Coffee, History } from "lucide-react";
+import TeamDetailsDrawer from "./TeamDetailsDrawer";
+
+export default function CheckInDashboard({ hackathons }) {
+  const [selectedHackathon, setSelectedHackathon] = useState(hackathons[0]?.id);
+  const [query, setQuery] = useState("");
+  const [teams, setTeams] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [processingId, setProcessingId] = useState(null);
+  const [selectedTeam, setSelectedTeam] = useState(null);
+
+  const fetchTeams = useCallback(async () => {
+    if (!selectedHackathon) return;
+    setLoading(true);
+    const res = await searchTeams(selectedHackathon, query);
+    if (res.error) {
+      toast.error(res.error);
+    } else {
+      setTeams(res.teams || []);
+    }
+    setLoading(false);
+  }, [selectedHackathon, query]);
+
+  // Debounced search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchTeams();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query, fetchTeams]);
+
+  const handleCheckInFull = async (teamId, members) => {
+    setProcessingId(teamId);
+    // Set all members to Present
+    const updatedMembers = members.map(m => ({ ...m, status: 'Present' }));
+    const res = await checkInTeam(teamId, selectedHackathon, updatedMembers);
+    setProcessingId(null);
+    
+    if (res.error) {
+      toast.error(res.error);
+    } else {
+      if (res.status === 'Checked-In') {
+        toast.success(`Checked in! Team: ${res.team_number}, Table: ${res.table_number}`);
+      } else {
+        toast.success("Team partially checked in.");
+      }
+      setSelectedTeam(null);
+      fetchTeams();
+    }
+  };
+
+  const handleCheckInPartial = async (teamId, members) => {
+    setProcessingId(teamId);
+    const res = await checkInTeam(teamId, selectedHackathon, members);
+    setProcessingId(null);
+    
+    if (res.error) {
+      toast.error(res.error);
+    } else {
+      if (res.status === 'Checked-In') {
+        toast.success(`Fully Checked in! Team: ${res.team_number}, Table: ${res.table_number}`);
+      } else {
+        toast.success("Saved partial check-in.");
+      }
+      setSelectedTeam(null);
+      fetchTeams();
+    }
+  };
+
+  const handleUndo = async (team) => {
+    if (!confirm(`Undo check-in for ${team.name}? This removes their team and table number.`)) return;
+    
+    setProcessingId(team.id);
+    const res = await undoCheckIn(team.id);
+    setProcessingId(null);
+    
+    if (res.error) {
+      toast.error(res.error);
+    } else {
+      toast.success("Check-in undone.");
+      fetchTeams();
+    }
+  };
+
+  const stats = {
+    total: teams.length,
+    checkedIn: teams.filter(t => t.status === "Checked-In").length,
+    pending: teams.filter(t => t.status === "Registered").length
+  };
+  
+  const recentCheckIns = [...teams]
+    .filter(t => t.status === "Checked-In" && t.arrival_time)
+    .sort((a, b) => new Date(b.arrival_time) - new Date(a.arrival_time))
+    .slice(0, 10);
+
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: '2rem', display: 'flex', gap: '2rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <div className="field" style={{ margin: 0, minWidth: 200 }}>
+          <label className="eyebrow">Active Event</label>
+          <select 
+            className="input" 
+            value={selectedHackathon} 
+            onChange={e => setSelectedHackathon(e.target.value)}
+          >
+            {hackathons.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+          </select>
+        </div>
+        
+        <div style={{ display: 'flex', gap: '3rem', flex: 1, justifyContent: 'flex-end' }}>
+          <div style={{ textAlign: 'center' }}>
+            <div className="score-big">{stats.total}</div>
+            <div className="eyebrow">Total Found</div>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div className="score-big" style={{ color: 'var(--success)' }}>{stats.checkedIn}</div>
+            <div className="eyebrow">Checked In</div>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div className="score-big" style={{ color: 'var(--warn)' }}>{stats.pending}</div>
+            <div className="eyebrow">Pending</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '2rem' }}>
+        
+        {/* Main Check-In Area */}
+        <div>
+          <div className="flex-between" style={{ marginBottom: '1.5rem' }}>
+            <div style={{ position: 'relative', width: '100%', maxWidth: 500 }}>
+              <Search size={18} style={{ position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+              <input 
+                className="input" 
+                style={{ paddingLeft: 48, fontSize: '1rem', padding: '1rem 1rem 1rem 48px', borderRadius: 100 }}
+                placeholder="Search by ID, Name, Phone, Email..." 
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <button className="btn btn-secondary" style={{ borderRadius: 100 }}>
+              <QrCode size={18} /> Scan QR
+            </button>
+          </div>
+
+          <div className="table-wrapper">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Team Info</th>
+                  <th>Food</th>
+                  <th>Assignment</th>
+                  <th style={{ textAlign: 'right' }}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading && teams.length === 0 ? (
+                  <tr><td colSpan={5} className="text-center muted" style={{ padding: '3rem' }}>Searching...</td></tr>
+                ) : teams.length === 0 ? (
+                  <tr><td colSpan={5} className="text-center muted" style={{ padding: '3rem' }}>No teams found.</td></tr>
+                ) : (
+                  teams.map((t) => {
+                    const isCheckedIn = t.status === "Checked-In";
+                    const isPartiallyCheckedIn = t.status === "Partially Checked In";
+                    let statusColor = '';
+                    if (isCheckedIn) statusColor = 'badge-active';
+                    else if (isPartiallyCheckedIn) statusColor = 'badge-warning';
+
+                    return (
+                      <tr 
+                        key={t.id} 
+                        style={{ 
+                          background: isCheckedIn ? 'rgba(16, 185, 129, 0.05)' : isPartiallyCheckedIn ? 'rgba(245, 158, 11, 0.05)' : 'transparent',
+                          cursor: 'pointer',
+                          transition: 'background 0.2s'
+                        }}
+                        onClick={() => setSelectedTeam(t)}
+                        className="hover-row"
+                      >
+                        <td>
+                          <span className={`badge ${statusColor}`}>
+                            {isCheckedIn ? <CheckCircle size={12} /> : <Clock size={12} />}
+                            {t.status}
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 600, fontSize: '1rem' }}>{t.name}</div>
+                          <div className="muted text-xs mono">ID: {t.team_code} | {t.leader_name}</div>
+                        </td>
+                        <td>
+                          {t.food_purchased ? (
+                            <span className="badge" style={{ background: 'var(--accent-soft)', color: 'var(--accent-primary)', borderColor: 'var(--accent-dim)' }}>
+                              <Coffee size={12}/> {t.food_package || 'Prepaid'}
+                            </span>
+                          ) : (
+                            <span className="muted text-xs">Pending</span>
+                          )}
+                        </td>
+                        <td>
+                          {isCheckedIn ? (
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              <span className="badge" style={{ background: 'var(--bg-elevated)', color: '#FFF' }}>Team {t.team_number}</span>
+                              <span className="badge" style={{ background: 'var(--bg-elevated)', color: '#FFF' }}>Table {t.table_number}</span>
+                            </div>
+                          ) : (
+                            <span className="muted text-xs italic">{isPartiallyCheckedIn ? 'Waiting for members' : 'Pending Check-in'}</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button 
+                            className="btn btn-secondary btn-sm"
+                            onClick={(e) => { e.stopPropagation(); setSelectedTeam(t); }}
+                          >
+                            Manage
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        {/* Sidebar History */}
+        <div>
+          <div className="card" style={{ height: '100%' }}>
+            <h3 className="subtitle" style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
+              <History size={18} /> Recent Check-Ins
+            </h3>
+            
+            {recentCheckIns.length === 0 ? (
+              <div className="muted text-center" style={{ padding: '2rem 0' }}>No recent check-ins</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {recentCheckIns.map(t => (
+                  <div key={t.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '1rem' }}>
+                    <div style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--success)', marginTop: 6 }}></div>
+                    <div>
+                      <div style={{ fontWeight: 600 }}>{t.name}</div>
+                      <div className="muted text-xs">Team {t.team_number} • Table {t.table_number}</div>
+                      <div className="muted text-xs" style={{ marginTop: 4 }}>
+                        {new Date(t.arrival_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+      </div>
+
+      {selectedTeam && (
+        <TeamDetailsDrawer 
+          team={selectedTeam} 
+          hackathon={{ id: selectedHackathon }}
+          onClose={() => setSelectedTeam(null)}
+          onCheckInFull={handleCheckInFull}
+          onCheckInPartial={handleCheckInPartial}
+        />
+      )}
+    </div>
+  );
+}

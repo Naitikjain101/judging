@@ -1,0 +1,2759 @@
+
+
+--- src/app/layout.js ---
+
+import { Space_Grotesk, Inter, JetBrains_Mono } from "next/font/google";
+import "./globals.css";
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-space-grotesk",
+  weight: ["500", "600", "700"],
+});
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  weight: ["400", "500", "600"],
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-jetbrains-mono",
+  weight: ["400", "500", "600"],
+});
+
+export const metadata = {
+  title: "HU Judging",
+  description: "Hackathon judging platform",
+};
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en" className={`${spaceGrotesk.variable} ${inter.variable} ${jetbrainsMono.variable}`}>
+      <body>{children}</body>
+    </html>
+  );
+}
+
+
+--- src/app/page.js ---
+
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+
+const JUDGE_AUTH_DOMAIN = process.env.JUDGE_AUTH_DOMAIN || "judge.hu.local";
+
+export default async function Home() {
+  const supabase = await createClient();
+  const { data: userData } = await supabase.auth.getUser();
+
+  if (userData?.user) {
+    const email = userData.user.email || "";
+    redirect(email.endsWith(`@${JUDGE_AUTH_DOMAIN}`) ? "/judge/dashboard" : "/organizer/dashboard");
+  }
+
+  return (
+    <div className="shell">
+      <div className="page-narrow" style={{ paddingTop: 80 }}>
+        <div className="eyebrow">hacker&apos;s unity</div>
+        <h1 className="title" style={{ marginBottom: 8 }}>
+          Judging Platform
+        </h1>
+        <p className="muted" style={{ marginBottom: 32 }}>
+          Score teams, track feedback, run the leaderboard — all in one place.
+        </p>
+
+        <div className="card" style={{ marginBottom: 12 }}>
+          <h2 className="subtitle" style={{ fontSize: 16, marginBottom: 6 }}>
+            I&apos;m a judge
+          </h2>
+          <p className="muted" style={{ fontSize: 13, marginBottom: 14 }}>
+            Log in with the ID and password your organizer gave you.
+          </p>
+          <Link href="/judge/login" className="btn btn-primary">
+            Judge login
+          </Link>
+        </div>
+
+        <div className="card">
+          <h2 className="subtitle" style={{ fontSize: 16, marginBottom: 6 }}>
+            I&apos;m an organizer
+          </h2>
+          <p className="muted" style={{ fontSize: 13, marginBottom: 14 }}>
+            Create hackathons, manage judges and teams, view results.
+          </p>
+          <Link href="/organizer/login" className="btn btn-secondary">
+            Organizer login
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+              }
+
+
+--- src/app/organizer/auth-actions.js ---
+
+"use server";
+
+import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
+
+export async function signUpOrganizer(prevState, formData) {
+  const email = formData.get("email");
+  const password = formData.get("password");
+  const fullName = formData.get("fullName");
+
+  const supabase = await createClient();
+
+  const { data, error } = await supabase.auth.signUp({ email, password });
+  if (error) {
+    return { error: error.message };
+  }
+
+  if (data.user) {
+    const admin = createAdminClient();
+    const { error: profileError } = await admin
+      .from("organizer_profiles")
+      .insert({ id: data.user.id, full_name: fullName });
+    if (profileError) {
+      return { error: profileError.message };
+    }
+  }
+
+  redirect("/organizer/dashboard");
+}
+
+export async function logInOrganizer(prevState, formData) {
+  const email = formData.get("email");
+  const password = formData.get("password");
+
+  const supabase = await createClient();
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  redirect("/organizer/dashboard");
+}
+
+
+--- src/app/organizer/auth/callback/route.js ---
+
+import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { NextResponse } from "next/server";
+
+export async function GET(request) {
+  const { searchParams, origin } = new URL(request.url);
+  const code = searchParams.get("code");
+
+  if (code) {
+    const supabase = await createClient();
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+
+    if (!error && data.user) {
+      const admin = createAdminClient();
+
+      // Only insert a profile row if one doesn't already exist
+      const { data: existingProfile } = await admin
+        .from("organizer_profiles")
+        .select("id")
+        .eq("id", data.user.id)
+        .maybeSingle();
+
+      if (!existingProfile) {
+        const fullName =
+          data.user.user_metadata?.full_name ||
+          data.user.user_metadata?.name ||
+          data.user.email;
+
+        await admin.from("organizer_profiles").insert({
+          id: data.user.id,
+          full_name: fullName,
+        });
+      }
+    }
+  }
+
+  return NextResponse.redirect(`${origin}/organizer/dashboard`);
+}
+
+
+--- src/app/organizer/signup/page.js ---
+
+import { redirect } from "next/navigation";
+
+export default function OrganizerSignupPage() {
+  redirect("/organizer/login");
+}
+
+
+--- src/app/organizer/dashboard/page.js ---
+
+import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
+import Link from "next/link";
+import OrganizerTopbar from "@/components/OrganizerTopbar";
+import TerminalPath from "@/components/TerminalPath";
+import SubmitButton from "@/components/SubmitButton";
+import { createHackathon } from "../hackathons/actions";
+
+export default async function OrganizerDashboard() {
+  const supabase = await createClient();
+  const { data: userData } = await supabase.auth.getUser();
+
+  if (!userData?.user) redirect("/organizer/login");
+
+  const { data: hackathons } = await supabase
+    .from("hackathons")
+    .select("id, name, description, status, created_at")
+    .order("created_at", { ascending: false });
+
+  return (
+    <div className="shell">
+      <OrganizerTopbar email={userData.user.email} />
+      <div className="page">
+        <TerminalPath user="organizer" segments={["dashboard"]} />
+        <h1 className="title" style={{ marginBottom: 24 }}>
+          Hackathons
+        </h1>
+
+        <details className="card" style={{ marginBottom: 24 }}>
+          <summary style={{ cursor: "pointer", fontWeight: 600 }}>+ New hackathon</summary>
+          <form action={createHackathon} style={{ marginTop: 16 }}>
+            <div className="field">
+              <label htmlFor="name">Name</label>
+              <input className="input" id="name" name="name" required />
+            </div>
+            <div className="field">
+              <label htmlFor="description">Description</label>
+              <textarea className="textarea" id="description" name="description" />
+            </div>
+            <SubmitButton pendingText="Creating…">Create hackathon</SubmitButton>
+          </form>
+        </details>
+
+        {!hackathons?.length && (
+          <div className="empty">No hackathons yet. Create one to get started.</div>
+        )}
+
+        {hackathons?.map((h) => (
+          <Link key={h.id} href={`/organizer/hackathons/${h.id}`} className="card card-link">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <h2 style={{ fontSize: 17, marginBottom: 4 }}>{h.name}</h2>
+                {h.description && <p className="muted" style={{ fontSize: 13 }}>{h.description}</p>}
+              </div>
+              <span className={`badge ${h.status === "active" ? "badge-active" : ""}`}>{h.status}</span>
+            </div>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+            }
+            
+
+
+--- src/app/organizer/hackathons/actions.js ---
+
+"use server";
+
+import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+
+const JUDGE_AUTH_DOMAIN = process.env.JUDGE_AUTH_DOMAIN || "judge.hu.local";
+
+function judgeEmail(judgeCode) {
+  return `${judgeCode.trim().toLowerCase()}@${JUDGE_AUTH_DOMAIN}`;
+}
+
+// ── Hackathons ──────────────────────────────────────────────
+export async function createHackathon(formData) {
+  const name = formData.get("name");
+  const description = formData.get("description");
+
+  const supabase = await createClient();
+  const { data: userData } = await supabase.auth.getUser();
+
+  const { data, error } = await supabase
+    .from("hackathons")
+    .insert({ name, description, created_by: userData.user?.id })
+    .select()
+    .single();
+
+  if (error) return { error: error.message };
+
+  redirect(`/organizer/hackathons/${data.id}`);
+}
+
+export async function setHackathonStatus(hackathonId, status) {
+  const supabase = await createClient();
+  await supabase.from("hackathons").update({ status }).eq("id", hackathonId);
+  revalidatePath(`/organizer/hackathons/${hackathonId}`);
+}
+
+// ── Teams ───────────────────────────────────────────────────
+export async function addTeam(hackathonId, formData) {
+  const name = formData.get("name");
+  const members = formData.get("members");
+  const projectLink = formData.get("projectLink");
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("teams")
+    .insert({ hackathon_id: hackathonId, name, members, project_link: projectLink });
+
+  if (error) return { error: error.message };
+  revalidatePath(`/organizer/hackathons/${hackathonId}`);
+  return { error: null };
+}
+
+// rows: [{ name, members, projectLink }]
+export async function importTeamsCSV(hackathonId, rows) {
+  if (!rows?.length) return { error: "No rows to import." };
+
+  const supabase = await createClient();
+  const payload = rows
+    .filter((r) => r.name)
+    .map((r) => ({
+      hackathon_id: hackathonId,
+      name: r.name,
+      members: r.members || "",
+      project_link: r.projectLink || "",
+    }));
+
+  const { error } = await supabase.from("teams").insert(payload);
+  if (error) return { error: error.message };
+
+  revalidatePath(`/organizer/hackathons/${hackathonId}`);
+  return { error: null, count: payload.length };
+}
+
+export async function deleteTeam(hackathonId, teamId) {
+  const supabase = await createClient();
+  await supabase.from("teams").delete().eq("id", teamId);
+  revalidatePath(`/organizer/hackathons/${hackathonId}`);
+}
+
+// ── Judges ──────────────────────────────────────────────────
+export async function addJudge(hackathonId, formData) {
+  const name = formData.get("name");
+  const judgeCode = formData.get("judgeCode");
+  const password = formData.get("password");
+
+  if (!judgeCode || !password) return { error: "Judge ID and password are required." };
+
+  const admin = createAdminClient();
+  const email = judgeEmail(judgeCode);
+
+  const { data: authUser, error: authError } = await admin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+    user_metadata: { role: "judge", judge_code: judgeCode },
+  });
+
+  if (authError) return { error: authError.message };
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("judges").insert({
+    hackathon_id: hackathonId,
+    judge_code: judgeCode,
+    password,
+    auth_user_id: authUser.user.id,
+    name,
+  });
+
+  if (error) {
+    // Roll back the auth user if the judges row failed (e.g. duplicate code)
+    await admin.auth.admin.deleteUser(authUser.user.id);
+    return { error: error.message };
+  }
+
+  revalidatePath(`/organizer/hackathons/${hackathonId}`);
+  return { error: null };
+}
+
+export async function deleteJudge(hackathonId, judgeId, authUserId) {
+  const supabase = await createClient();
+  await supabase.from("judges").delete().eq("id", judgeId);
+
+  if (authUserId) {
+    const admin = createAdminClient();
+    await admin.auth.admin.deleteUser(authUserId);
+  }
+
+  revalidatePath(`/organizer/hackathons/${hackathonId}`);
+}
+
+// ── Rounds ──────────────────────────────────────────────────
+export async function createRound(hackathonId, formData) {
+  const name = formData.get("name");
+  const orderIndex = Number(formData.get("orderIndex")) || 1;
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("rounds")
+    .insert({ hackathon_id: hackathonId, name, order_index: orderIndex })
+    .select()
+    .single();
+
+  if (error) return { error: error.message };
+
+  redirect(`/organizer/hackathons/${hackathonId}/rounds/${data.id}`);
+}
+
+export async function setRoundStatus(hackathonId, roundId, status) {
+  const supabase = await createClient();
+  await supabase.from("rounds").update({ status }).eq("id", roundId);
+  revalidatePath(`/organizer/hackathons/${hackathonId}/rounds/${roundId}`);
+}
+
+// ── Criteria ────────────────────────────────────────────────
+export async function addCriterion(hackathonId, roundId, formData) {
+  const name = formData.get("name");
+  const maxScore = Number(formData.get("maxScore")) || 10;
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("criteria").insert({ round_id: roundId, name, max_score: maxScore });
+
+  if (error) return { error: error.message };
+  revalidatePath(`/organizer/hackathons/${hackathonId}/rounds/${roundId}`);
+  return { error: null };
+}
+
+export async function deleteCriterion(hackathonId, roundId, criterionId) {
+  const supabase = await createClient();
+  await supabase.from("criteria").delete().eq("id", criterionId);
+  revalidatePath(`/organizer/hackathons/${hackathonId}/rounds/${roundId}`);
+}
+
+// ── Round team selection (advancement) ────────────────────
+export async function setRoundTeams(hackathonId, roundId, teamIds) {
+  const supabase = await createClient();
+
+  await supabase.from("round_teams").delete().eq("round_id", roundId);
+
+  if (teamIds.length) {
+    const rows = teamIds.map((teamId) => ({ round_id: roundId, team_id: teamId }));
+    const { error } = await supabase.from("round_teams").insert(rows);
+    if (error) return { error: error.message };
+  }
+
+  revalidatePath(`/organizer/hackathons/${hackathonId}/rounds/${roundId}`);
+  return { error: null };
+}
+
+// Advance the top N teams from the previous round's aggregated results
+export async function autoAdvanceTopN(hackathonId, roundId, previousRoundId, topN) {
+  const supabase = await createClient();
+
+  const { data: submissions, error } = await supabase
+    .from("submissions")
+    .select("team_id, score_details(value)")
+    .eq("round_id", previousRoundId);
+
+  if (error) return { error: error.message };
+
+  const totalsByTeam = {};
+  for (const sub of submissions) {
+    const total = (sub.score_details || []).reduce((sum, s) => sum + Number(s.value), 0);
+    if (!totalsByTeam[sub.team_id]) totalsByTeam[sub.team_id] = [];
+    totalsByTeam[sub.team_id].push(total);
+  }
+
+  const ranked = Object.entries(totalsByTeam)
+    .map(([teamId, totals]) => ({
+      teamId,
+      finalScore: totals.reduce((a, b) => a + b, 0) / totals.length,
+    }))
+    .sort((a, b) => b.finalScore - a.finalScore)
+    .slice(0, topN)
+    .map((r) => r.teamId);
+
+  return setRoundTeams(hackathonId, roundId, ranked);
+}
+
+// ── Judge ↔ team assignment ────────────────────────────────
+export async function setJudgeAssignments(hackathonId, roundId, judgeId, teamIds) {
+  const supabase = await createClient();
+
+  await supabase.from("round_judge_assignments").delete().eq("round_id", roundId).eq("judge_id", judgeId);
+
+  if (teamIds.length) {
+    const rows = teamIds.map((teamId) => ({ round_id: roundId, judge_id: judgeId, team_id: teamId }));
+    const { error } = await supabase.from("round_judge_assignments").insert(rows);
+    if (error) return { error: error.message };
+  }
+
+  revalidatePath(`/organizer/hackathons/${hackathonId}/rounds/${roundId}`);
+  return { error: null };
+}
+
+
+--- src/app/organizer/hackathons/[hackathonId]/page.js ---
+
+import { createClient } from "@/lib/supabase/server";
+import { redirect, notFound } from "next/navigation";
+import OrganizerTopbar from "@/components/OrganizerTopbar";
+import TerminalPath from "@/components/TerminalPath";
+import HackathonTabs from "@/components/hackathon/HackathonTabs";
+import { setHackathonStatus } from "@/app/organizer/hackathons/actions";
+
+export default async function HackathonDetailPage({ params }) {
+  const { hackathonId } = await params;
+  const supabase = await createClient();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData?.user) redirect("/organizer/login");
+
+  const { data: hackathon } = await supabase
+    .from("hackathons")
+    .select("id, name, description, status, created_by")
+    .eq("id", hackathonId)
+    .single();
+
+  if (!hackathon) notFound();
+  
+  if (hackathon.created_by !== userData.user.id) {
+    redirect("/organizer/dashboard");
+  }
+
+  const [{ data: teams }, { data: judges }, { data: rounds }] = await Promise.all([
+    supabase.from("teams").select("*").eq("hackathon_id", hackathonId).order("created_at"),
+    supabase.from("judges").select("*").eq("hackathon_id", hackathonId).order("created_at"),
+    supabase.from("rounds").select("*").eq("hackathon_id", hackathonId).order("order_index"),
+  ]);
+
+  return (
+    <div className="shell">
+      <OrganizerTopbar email={userData.user.email} />
+      <div className="page">
+        <TerminalPath user="organizer" segments={["hackathons", hackathon.name]} />
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <h1 className="title">{hackathon.name}</h1>
+            {hackathon.description && <p className="muted">{hackathon.description}</p>}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {["draft", "active", "completed"].map((s) => (
+              <form key={s} action={async () => { "use server"; await setHackathonStatus(hackathonId, s); }}>
+                <button className={`btn btn-sm ${hackathon.status === s ? "btn-primary" : "btn-secondary"}`}>
+                  {s}
+                </button>
+              </form>
+            ))}
+          </div>
+        </div>
+
+        <HackathonTabs hackathonId={hackathonId} teams={teams || []} judges={judges || []} rounds={rounds || []} />
+      </div>
+    </div>
+  );
+  }
+
+
+--- src/app/organizer/hackathons/[hackathonId]/rounds/[roundId]/page.js ---
+
+import { createClient } from "@/lib/supabase/server";
+import { redirect, notFound } from "next/navigation";
+import Link from "next/link";
+import OrganizerTopbar from "@/components/OrganizerTopbar";
+import TerminalPath from "@/components/TerminalPath";
+import CriteriaPanel from "@/components/round/CriteriaPanel";
+import TeamSelectionPanel from "@/components/round/TeamSelectionPanel";
+import JudgeAssignmentPanel from "@/components/round/JudgeAssignmentPanel";
+import { setRoundStatus } from "@/app/organizer/hackathons/actions";
+
+export default async function RoundDetailPage({ params }) {
+  const { hackathonId, roundId } = await params;
+  const supabase = await createClient();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData?.user) redirect("/organizer/login");
+
+  const { data: round } = await supabase.from("rounds").select("*").eq("id", roundId).single();
+  if (!round) notFound();
+
+  const { data: hackathon } = await supabase.from("hackathons").select("id, name").eq("id", hackathonId).single();
+
+  const [{ data: allTeams }, { data: roundTeamRows }, { data: judges }, { data: criteria }, { data: assignments }, { data: previousRound }] =
+    await Promise.all([
+      supabase.from("teams").select("id, name").eq("hackathon_id", hackathonId).order("name"),
+      supabase.from("round_teams").select("team_id").eq("round_id", roundId),
+      supabase.from("judges").select("id, name, judge_code").eq("hackathon_id", hackathonId).order("created_at"),
+      supabase.from("criteria").select("*").eq("round_id", roundId).order("order_index"),
+      supabase.from("round_judge_assignments").select("judge_id, team_id").eq("round_id", roundId),
+      supabase
+        .from("rounds")
+        .select("id")
+        .eq("hackathon_id", hackathonId)
+        .lt("order_index", round.order_index)
+        .order("order_index", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+
+  const selectedTeamIds = (roundTeamRows || []).map((r) => r.team_id);
+  const roundTeams = (allTeams || []).filter((t) => selectedTeamIds.includes(t.id));
+
+  return (
+    <div className="shell">
+      <OrganizerTopbar email={userData.user.email} />
+      <div className="page">
+        <TerminalPath user="organizer" segments={["hackathons", hackathon?.name, round.name]} />
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <h1 className="title">{round.name}</h1>
+            <Link href={`/organizer/hackathons/${hackathonId}`} className="muted" style={{ fontSize: 13 }}>
+              ← back to {hackathon?.name}
+            </Link>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {["upcoming", "active", "completed"].map((s) => (
+              <form key={s} action={async () => { "use server"; await setRoundStatus(hackathonId, roundId, s); }}>
+                <button className={`btn btn-sm ${round.status === s ? "btn-primary" : "btn-secondary"}`}>
+                  {s}
+                </button>
+              </form>
+            ))}
+            <Link href={`/organizer/hackathons/${hackathonId}/rounds/${roundId}/results`} className="btn btn-secondary btn-sm">
+              Results →
+            </Link>
+          </div>
+        </div>
+
+        <CriteriaPanel hackathonId={hackathonId} roundId={roundId} criteria={criteria || []} />
+
+        <TeamSelectionPanel
+          hackathonId={hackathonId}
+          roundId={roundId}
+          allTeams={allTeams || []}
+          selectedTeamIds={selectedTeamIds}
+          previousRoundId={previousRound?.id || null}
+        />
+
+        <div className="card">
+          <JudgeAssignmentPanel
+            hackathonId={hackathonId}
+            roundId={roundId}
+            judges={judges || []}
+            roundTeams={roundTeams}
+            assignments={assignments || []}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+--- src/app/organizer/hackathons/[hackathonId]/rounds/[roundId]/results/page.js ---
+
+import { createClient } from "@/lib/supabase/server";
+import { redirect, notFound } from "next/navigation";
+import Link from "next/link";
+import OrganizerTopbar from "@/components/OrganizerTopbar";
+import TerminalPath from "@/components/TerminalPath";
+import ResultsView from "@/components/round/ResultsView";
+
+export default async function RoundResultsPage({ params }) {
+  const { hackathonId, roundId } = await params;
+  const supabase = await createClient();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData?.user) redirect("/organizer/login");
+
+  const { data: round } = await supabase.from("rounds").select("*").eq("id", roundId).single();
+  if (!round) notFound();
+
+  const { data: hackathon } = await supabase.from("hackathons").select("id, name").eq("id", hackathonId).single();
+
+  const [{ data: roundTeamRows }, { data: allTeams }, { data: judges }, { data: criteria }, { data: assignments }, { data: submissions }] =
+    await Promise.all([
+      supabase.from("round_teams").select("team_id").eq("round_id", roundId),
+      supabase.from("teams").select("id, name").eq("hackathon_id", hackathonId),
+      supabase.from("judges").select("id, name, judge_code").eq("hackathon_id", hackathonId),
+      supabase.from("criteria").select("id, name, max_score").eq("round_id", roundId),
+      supabase.from("round_judge_assignments").select("judge_id, team_id").eq("round_id", roundId),
+      supabase.from("submissions").select("id, judge_id, team_id, feedback, submitted, score_details(criterion_id, value)").eq("round_id", roundId),
+    ]);
+
+  const teamIds = new Set((roundTeamRows || []).map((r) => r.team_id));
+  const teams = (allTeams || []).filter((t) => teamIds.has(t.id));
+
+  return (
+    <div className="shell">
+      <OrganizerTopbar email={userData.user.email} />
+      <div className="page">
+        <TerminalPath user="organizer" segments={["hackathons", hackathon?.name, round.name, "results"]} />
+        <Link href={`/organizer/hackathons/${hackathonId}/rounds/${roundId}`} className="muted" style={{ fontSize: 13 }}>
+          ← back to {round.name}
+        </Link>
+        <h1 className="title" style={{ margin: "12px 0 24px" }}>Results</h1>
+
+        <ResultsView
+          teams={teams}
+          judges={judges || []}
+          criteria={criteria || []}
+          assignments={assignments || []}
+          submissions={submissions || []}
+        />
+      </div>
+    </div>
+  );
+}
+
+
+--- src/app/organizer/login/page.js ---
+
+import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
+import GoogleSignInButton from "@/components/GoogleSignInButton";
+import TerminalPath from "@/components/TerminalPath";
+
+const JUDGE_AUTH_DOMAIN = process.env.JUDGE_AUTH_DOMAIN || "judge.hu.local";
+
+export default async function OrganizerLoginPage({ searchParams }) {
+  const params = await searchParams;
+  const supabase = await createClient();
+  const { data: userData } = await supabase.auth.getUser();
+
+  if (userData?.user) {
+    const email = userData.user.email || "";
+    redirect(email.endsWith(`@${JUDGE_AUTH_DOMAIN}`) ? "/judge/dashboard" : "/organizer/dashboard");
+  }
+
+  return (
+    <div className="shell">
+      <div className="page-narrow" style={{ paddingTop: 60 }}>
+        <TerminalPath segments={["organizer", "login"]} />
+        <h1 className="title" style={{ marginBottom: 24 }}>
+          Organizer login
+        </h1>
+
+        {params?.error && <div className="alert alert-error">{params.error}</div>}
+
+        <div className="card">
+          <p className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
+            Sign in with your Google account to create and manage hackathons.
+          </p>
+          <GoogleSignInButton />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+--- src/app/judge/actions.js ---
+
+"use server";
+
+import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+
+const JUDGE_AUTH_DOMAIN = process.env.JUDGE_AUTH_DOMAIN || "judge.hu.local";
+
+export async function logInJudge(prevState, formData) {
+  const judgeCode = formData.get("judgeCode")?.trim().toLowerCase();
+  const password = formData.get("password");
+
+  if (!judgeCode || !password) return { error: "Enter your judge ID and password." };
+
+  const supabase = await createClient();
+  const { error } = await supabase.auth.signInWithPassword({
+    email: `${judgeCode}@${JUDGE_AUTH_DOMAIN}`,
+    password,
+  });
+
+  if (error) return { error: "Invalid judge ID or password." };
+
+  redirect("/judge/dashboard");
+}
+
+export async function logOutJudge() {
+  const supabase = await createClient();
+  await supabase.auth.signOut();
+  redirect("/judge/login");
+}
+
+// Upserts a submission + its per-criterion scores for the current judge.
+export async function submitScore({ roundId, teamId, feedback, scores }) {
+  const supabase = await createClient();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData?.user) return { error: "Not logged in." };
+
+  const { data: judge } = await supabase
+    .from("judges")
+    .select("id")
+    .eq("auth_user_id", userData.user.id)
+    .single();
+
+  if (!judge) return { error: "Judge account not found." };
+
+  const { data: submission, error: subError } = await supabase
+    .from("submissions")
+    .upsert(
+      {
+        round_id: roundId,
+        judge_id: judge.id,
+        team_id: teamId,
+        feedback,
+        submitted: true,
+        submitted_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "round_id,judge_id,team_id" }
+    )
+    .select()
+    .single();
+
+  if (subError) return { error: subError.message };
+
+  const rows = Object.entries(scores).map(([criterionId, value]) => ({
+    submission_id: submission.id,
+    criterion_id: criterionId,
+    value: Number(value) || 0,
+  }));
+
+  if (rows.length) {
+    const { error: scoreError } = await supabase
+      .from("score_details")
+      .upsert(rows, { onConflict: "submission_id,criterion_id" });
+    if (scoreError) return { error: scoreError.message };
+  }
+
+  revalidatePath("/judge/dashboard");
+  return { error: null };
+}
+
+
+--- src/app/judge/dashboard/page.js ---
+
+import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
+import JudgeTopbar from "@/components/JudgeTopbar";
+import TerminalPath from "@/components/TerminalPath";
+import JudgeScoringApp from "@/components/judge/JudgeScoringApp";
+
+export default async function JudgeDashboardPage() {
+  const supabase = await createClient();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData?.user) redirect("/judge/login");
+
+  const { data: judge } = await supabase
+    .from("judges")
+    .select("id, name, judge_code, hackathon_id")
+    .eq("auth_user_id", userData.user.id)
+    .single();
+
+  if (!judge) redirect("/judge/login");
+
+  const { data: hackathon } = await supabase
+    .from("hackathons")
+    .select("name")
+    .eq("id", judge.hackathon_id)
+    .single();
+
+  const { data: assignmentRows } = await supabase
+    .from("round_judge_assignments")
+    .select("round_id, team_id")
+    .eq("judge_id", judge.id);
+
+  const roundIds = [...new Set((assignmentRows || []).map((a) => a.round_id))];
+
+  let roundsData = [];
+  if (roundIds.length) {
+    const { data: rounds } = await supabase
+      .from("rounds")
+      .select("id, name, status, order_index")
+      .in("id", roundIds)
+      .order("order_index");
+
+    roundsData = await Promise.all(
+      (rounds || []).map(async (round) => {
+        const teamIds = assignmentRows.filter((a) => a.round_id === round.id).map((a) => a.team_id);
+
+        const [{ data: teams }, { data: criteria }, { data: submissions }] = await Promise.all([
+          supabase.from("teams").select("id, name, members, project_link").in("id", teamIds),
+          supabase.from("criteria").select("id, name, max_score").eq("round_id", round.id).order("order_index"),
+          supabase
+            .from("submissions")
+            .select("team_id, feedback, submitted, score_details(criterion_id, value)")
+            .eq("round_id", round.id)
+            .eq("judge_id", judge.id),
+        ]);
+
+        return { round, teams: teams || [], criteria: criteria || [], submissions: submissions || [] };
+      })
+    );
+  }
+
+  return (
+    <div className="shell">
+      <JudgeTopbar judgeName={judge.name || judge.judge_code} />
+      <div className="page">
+        <TerminalPath user={judge.judge_code} segments={[hackathon?.name || "hackathon", "scoring"]} />
+        <h1 className="title" style={{ marginBottom: 24 }}>
+          Score your teams
+        </h1>
+
+        <JudgeScoringApp roundsData={roundsData} />
+      </div>
+    </div>
+  );
+}
+
+
+--- src/app/judge/login/page.js ---
+
+import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
+import JudgeLoginForm from "@/components/judge/JudgeLoginForm";
+import TerminalPath from "@/components/TerminalPath";
+
+const JUDGE_AUTH_DOMAIN = process.env.JUDGE_AUTH_DOMAIN || "judge.hu.local";
+
+export default async function JudgeLoginPage() {
+  const supabase = await createClient();
+  const { data: userData } = await supabase.auth.getUser();
+
+  if (userData?.user) {
+    const email = userData.user.email || "";
+    redirect(email.endsWith(`@${JUDGE_AUTH_DOMAIN}`) ? "/judge/dashboard" : "/organizer/dashboard");
+  }
+
+  return (
+    <div className="shell">
+      <div className="page-narrow" style={{ paddingTop: 60 }}>
+        <TerminalPath segments={["judge", "login"]} />
+        <h1 className="title" style={{ marginBottom: 24 }}>
+          Judge login
+        </h1>
+
+        <JudgeLoginForm />
+
+        <p className="muted" style={{ marginTop: 16, fontSize: 13 }}>
+          Don&apos;t have an ID? Ask your hackathon organizer.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+
+--- src/app/globals.css ---
+
+:root {
+  --bg: #0b0f0e;
+  --bg-elevated: #121815;
+  --bg-elevated-2: #182019;
+  --border: #223027;
+  --text: #eaf5ee;
+  --text-muted: #8fa69b;
+  --accent: #39ff88;
+  --accent-dim: #1f8f52;
+  --accent-soft: rgba(57, 255, 136, 0.1);
+  --danger: #ff6b6b;
+  --danger-soft: rgba(255, 107, 107, 0.1);
+  --warn: #ffcf5c;
+
+  --font-display: var(--font-space-grotesk), "Space Grotesk", sans-serif;
+  --font-body: var(--font-inter), "Inter", sans-serif;
+  --font-mono: var(--font-jetbrains-mono), "JetBrains Mono", monospace;
+
+  --radius: 10px;
+  --radius-sm: 6px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  background-image: radial-gradient(circle at 15% 0%, rgba(57, 255, 136, 0.06), transparent 40%);
+  color: var(--text);
+  font-family: var(--font-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+  color: inherit;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Layout shell ───────────────────────────────────────── */
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.page {
+  max-width: 1080px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 32px 24px 80px;
+}
+
+.page-narrow {
+  max-width: 480px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 32px 24px 80px;
+}
+
+/* ── Terminal path — signature element ─────────────────── */
+.terminal-path {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.terminal-path .prompt {
+  color: var(--accent);
+}
+
+.terminal-path .segment::after {
+  content: "/";
+  margin-left: 6px;
+  color: var(--border);
+}
+
+.terminal-path .segment:last-child {
+  color: var(--text);
+}
+
+.terminal-path .segment:last-child::after {
+  content: "";
+}
+
+.terminal-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  background: var(--accent);
+  margin-left: 2px;
+  animation: blink 1.1s steps(1) infinite;
+  vertical-align: middle;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ── Top nav ────────────────────────────────────────────── */
+.topbar {
+  border-bottom: 1px solid var(--border);
+  background: rgba(11, 15, 14, 0.85);
+  backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.topbar-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+/* ── Typography helpers ─────────────────────────────────── */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+h1.title {
+  font-size: 30px;
+}
+
+h2.subtitle {
+  font-size: 20px;
+  margin-bottom: 16px;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* ── Cards ──────────────────────────────────────────────── */
+.card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+
+.card + .card {
+  margin-top: 16px;
+}
+
+.card-link {
+  display: block;
+  text-decoration: none;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.card-link:hover {
+  border-color: var(--accent-dim);
+  transform: translateY(-1px);
+}
+
+.list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.list-item:last-child {
+  border-bottom: none;
+}
+
+/* ── Forms ──────────────────────────────────────────────── */
+.field {
+  margin-bottom: 16px;
+}
+
+.field label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.input,
+.textarea,
+select.input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.input:focus,
+.textarea:focus {
+  border-color: var(--accent-dim);
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+/* ── Buttons ────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  transition: opacity 0.15s ease, transform 0.05s ease;
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #06120b;
+}
+
+.btn-primary:hover {
+  opacity: 0.88;
+}
+
+.btn-secondary {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.btn-secondary:hover {
+  border-color: var(--accent-dim);
+}
+
+.btn-danger {
+  background: transparent;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Badges ─────────────────────────────────────────────── */
+.badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+  border-radius: 100px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.badge-active {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: var(--accent-soft);
+}
+
+.badge-warn {
+  color: var(--warn);
+  border-color: var(--warn);
+  background: rgba(255, 207, 92, 0.1);
+}
+
+.badge-danger {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+/* ── Tabs ───────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+
+.tab {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ── Table ──────────────────────────────────────────────── */
+table.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.data-table th {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.data-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* ── Alerts ─────────────────────────────────────────────── */
+.alert {
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.alert-error {
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+
+.alert-success {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+}
+
+/* ── Empty state ────────────────────────────────────────── */
+.empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* ── Rank leaderboard ───────────────────────────────────── */
+.rank {
+  font-family: var(--font-mono);
+  color: var(--accent);
+  width: 28px;
+  display: inline-block;
+}
+
+.score-big {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  color: var(--accent);
+}
+
+/* ── Scoring Layout & Bubbles ────────────────────────────── */
+.scoring-layout {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+@media (max-width: 768px) {
+  .scoring-layout {
+    flex-direction: column;
+  }
+}
+
+.scoring-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+@media (max-width: 768px) {
+  .scoring-sidebar {
+    width: 100%;
+  }
+}
+
+.scoring-main {
+  flex: 1;
+  width: 100%;
+}
+
+.team-nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s ease;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 14px;
+}
+
+.team-nav-btn:hover {
+  border-color: var(--accent-dim);
+}
+
+.team-nav-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.team-nav-btn .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.team-nav-btn .status-dot.done {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+
+.bubbles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bubble-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+
+.bubble-btn:hover {
+  border-color: var(--accent-dim);
+  background: var(--bg-elevated-2);
+}
+
+.bubble-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06120b;
+  font-weight: 600;
+}
+
+
+--- src/components/JudgeTopbar.jsx ---
+
+import Link from "next/link";
+import ProfileMenu from "@/components/ProfileMenu";
+
+export default function JudgeTopbar({ judgeName }) {
+  return (
+    <div className="topbar">
+      <div className="topbar-inner">
+        <Link href="/judge/dashboard" className="brand">
+          <span className="dot" />
+          HU Judging
+        </Link>
+        {judgeName && <ProfileMenu label={judgeName} loginPath="/judge/login" />}
+      </div>
+    </div>
+  );
+}
+
+
+--- src/components/TerminalPath.jsx ---
+
+// Signature element: a breadcrumb styled as a terminal prompt, e.g.
+// judge@hu:~/round-2$ scoring
+export default function TerminalPath({ user = "guest", segments = [] }) {
+  return (
+    <div className="terminal-path">
+      <span className="prompt">{user}@hu:~$</span>
+      {segments.map((segment, i) => (
+        <span className="segment" key={i}>
+          {segment}
+        </span>
+      ))}
+      <span className="terminal-cursor" aria-hidden="true" />
+    </div>
+  );
+}
+
+
+--- src/components/hackathon/JudgesPanel.jsx ---
+
+"use client";
+
+import { useState } from "react";
+import { addJudge, deleteJudge } from "@/app/organizer/hackathons/actions";
+import SubmitButton from "@/components/SubmitButton";
+
+function randomCode() {
+  return "J-" + Math.random().toString(36).slice(2, 7).toUpperCase();
+}
+
+function randomPassword() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+export default function JudgesPanel({ hackathonId, judges }) {
+  const [error, setError] = useState(null);
+  const [defaults, setDefaults] = useState({ code: randomCode(), password: randomPassword() });
+
+  async function handleAdd(formData) {
+    const res = await addJudge(hackathonId, formData);
+    if (res?.error) {
+      setError(res.error);
+    } else {
+      setError(null);
+      document.getElementById("add-judge-form")?.reset();
+      setDefaults({ code: randomCode(), password: randomPassword() });
+    }
+  }
+
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <form id="add-judge-form" action={handleAdd}>
+          {error && <div className="alert alert-error">{error}</div>}
+          <div className="field">
+            <label htmlFor="judge-name">Name</label>
+            <input className="input" id="judge-name" name="name" required />
+          </div>
+          <div style={{ display: "flex", gap: 12 }}>
+            <div className="field" style={{ flex: 1 }}>
+              <label htmlFor="judge-code">Judge ID</label>
+              <input className="input mono" id="judge-code" name="judgeCode" defaultValue={defaults.code} required />
+            </div>
+            <div className="field" style={{ flex: 1 }}>
+              <label htmlFor="judge-password">Password</label>
+              <input className="input mono" id="judge-password" name="password" defaultValue={defaults.password} required />
+            </div>
+          </div>
+          <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
+            Auto-generated — edit if you&apos;d rather set your own. Share these with the judge.
+          </p>
+          <SubmitButton pendingText="Adding…">Add judge</SubmitButton>
+        </form>
+      </div>
+
+      {!judges?.length && <div className="empty">No judges yet.</div>}
+
+      {judges?.map((j) => (
+        <div key={j.id} className="list-item">
+          <div>
+            <div style={{ fontWeight: 600 }}>{j.name || "Unnamed judge"}</div>
+            <div className="mono muted" style={{ fontSize: 12 }}>
+              ID: {j.judge_code} · Password: {j.password}
+            </div>
+          </div>
+          <button
+            className="btn btn-danger btn-sm"
+            onClick={() => deleteJudge(hackathonId, j.id, j.auth_user_id)}
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
+--- src/components/hackathon/HackathonTabs.jsx ---
+
+"use client";
+
+import { useState } from "react";
+import TeamsPanel from "./TeamsPanel";
+import JudgesPanel from "./JudgesPanel";
+import RoundsPanel from "./RoundsPanel";
+
+const TABS = [
+  { key: "teams", label: "teams" },
+  { key: "judges", label: "judges" },
+  { key: "rounds", label: "rounds" },
+];
+
+export default function HackathonTabs({ hackathonId, teams, judges, rounds }) {
+  const [active, setActive] = useState("teams");
+
+  return (
+    <div>
+      <div className="tabs">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            className={`tab ${active === t.key ? "active" : ""}`}
+            onClick={() => setActive(t.key)}
+          >
+            {t.label} ({t.key === "teams" ? teams.length : t.key === "judges" ? judges.length : rounds.length})
+          </button>
+        ))}
+      </div>
+
+      {active === "teams" && <TeamsPanel hackathonId={hackathonId} teams={teams} />}
+      {active === "judges" && <JudgesPanel hackathonId={hackathonId} judges={judges} />}
+      {active === "rounds" && <RoundsPanel hackathonId={hackathonId} rounds={rounds} />}
+    </div>
+  );
+}
+
+
+--- src/components/hackathon/TeamsPanel.jsx ---
+
+"use client";
+
+import { useState } from "react";
+import { addTeam, deleteTeam } from "@/app/organizer/hackathons/actions";
+import SubmitButton from "@/components/SubmitButton";
+import CsvImportTeams from "./CsvImportTeams";
+
+export default function TeamsPanel({ hackathonId, teams }) {
+  const [error, setError] = useState(null);
+
+  async function handleAdd(formData) {
+    const res = await addTeam(hackathonId, formData);
+    if (res?.error) setError(res.error);
+    else {
+      setError(null);
+      document.getElementById("add-team-form")?.reset();
+    }
+  }
+
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+          <form id="add-team-form" action={handleAdd} style={{ flex: 1, minWidth: 240 }}>
+            {error && <div className="alert alert-error">{error}</div>}
+            <div className="field">
+              <label htmlFor="team-name">Team name</label>
+              <input className="input" id="team-name" name="name" required />
+            </div>
+            <div className="field">
+              <label htmlFor="team-members">Members</label>
+              <input className="input" id="team-members" name="members" placeholder="Comma separated" />
+            </div>
+            <div className="field">
+              <label htmlFor="team-link">Project link</label>
+              <input className="input" id="team-link" name="projectLink" placeholder="https://…" />
+            </div>
+            <SubmitButton pendingText="Adding…">Add team</SubmitButton>
+          </form>
+          <CsvImportTeams hackathonId={hackathonId} />
+        </div>
+      </div>
+
+      {!teams?.length && <div className="empty">No teams yet.</div>}
+
+      {teams?.map((t) => (
+        <div key={t.id} className="list-item">
+          <div>
+            <div style={{ fontWeight: 600 }}>{t.name}</div>
+            {t.members && <div className="muted" style={{ fontSize: 13 }}>{t.members}</div>}
+            {t.project_link && (
+              <a href={t.project_link} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: 12, color: "var(--accent)" }}>
+                {t.project_link}
+              </a>
+            )}
+          </div>
+          <button className="btn btn-danger btn-sm" onClick={() => deleteTeam(hackathonId, t.id)}>
+            Remove
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
+--- src/components/hackathon/CsvImportTeams.jsx ---
+
+"use client";
+
+import { useState } from "react";
+import Papa from "papaparse";
+import { importTeamsCSV } from "@/app/organizer/hackathons/actions";
+
+// Expects a CSV with headers: name, members, projectLink
+export default function CsvImportTeams({ hackathonId }) {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setBusy(true);
+    setStatus(null);
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        const rows = results.data.map((r) => ({
+          name: r.name?.trim(),
+          members: r.members?.trim(),
+          projectLink: r.projectLink?.trim(),
+        }));
+        const res = await importTeamsCSV(hackathonId, rows);
+        setBusy(false);
+        setStatus(res.error ? { error: res.error } : { success: `Imported ${res.count} teams.` });
+        e.target.value = "";
+      },
+      error: (err) => {
+        setBusy(false);
+        setStatus({ error: err.message });
+      },
+    });
+  }
+
+  return (
+    <div>
+      <label className="btn btn-secondary btn-sm" style={{ cursor: "pointer" }}>
+        {busy ? "Importing…" : "Import CSV"}
+        <input type="file" accept=".csv" onChange={handleFile} disabled={busy} style={{ display: "none" }} />
+      </label>
+      <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+        Headers: name, members, projectLink
+      </p>
+      {status?.error && <div className="alert alert-error" style={{ marginTop: 8 }}>{status.error}</div>}
+      {status?.success && <div className="alert alert-success" style={{ marginTop: 8 }}>{status.success}</div>}
+    </div>
+  );
+}
+
+
+--- src/components/hackathon/RoundsPanel.jsx ---
+
+"use client";
+
+import Link from "next/link";
+import { createRound } from "@/app/organizer/hackathons/actions";
+import SubmitButton from "@/components/SubmitButton";
+
+export default function RoundsPanel({ hackathonId, rounds }) {
+  return (
+    <div>
+      <details className="card" style={{ marginBottom: 16 }}>
+        <summary style={{ cursor: "pointer", fontWeight: 600 }}>+ New round</summary>
+        <form action={(fd) => createRound(hackathonId, fd)} style={{ marginTop: 16 }}>
+          <div className="field">
+            <label htmlFor="round-name">Name</label>
+            <input className="input" id="round-name" name="name" placeholder="e.g. Round 1, Finals" required />
+          </div>
+          <div className="field">
+            <label htmlFor="round-order">Order</label>
+            <input className="input" id="round-order" name="orderIndex" type="number" defaultValue={(rounds?.length || 0) + 1} />
+          </div>
+          <SubmitButton pendingText="Creating…">Create round</SubmitButton>
+        </form>
+      </details>
+
+      {!rounds?.length && <div className="empty">No rounds yet.</div>}
+
+      {rounds?.map((r) => (
+        <Link
+          key={r.id}
+          href={`/organizer/hackathons/${hackathonId}/rounds/${r.id}`}
+          className="card card-link"
+          style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}
+        >
+          <div>
+            <div style={{ fontWeight: 600 }}>{r.name}</div>
+            <div className="muted" style={{ fontSize: 12 }}>Order {r.order_index}</div>
+          </div>
+          <span className={`badge ${r.status === "active" ? "badge-active" : ""}`}>{r.status}</span>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+
+--- src/components/ProfileMenu.jsx ---
+
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+
+export default function ProfileMenu({ label, loginPath }) {
+  const [open, setOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  async function handleLogout() {
+    setLoggingOut(true);
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    // Hard navigation — forces middleware to re-check auth from scratch,
+    // rather than relying on client router cache to reflect the new state.
+    window.location.href = loginPath;
+  }
+
+  const initial = (label || "?").trim().charAt(0).toUpperCase();
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Account menu"
+        style={{
+          width: 32,
+          height: 32,
+          borderRadius: "50%",
+          background: "var(--accent-soft)",
+          border: "1px solid var(--accent-dim)",
+          color: "var(--accent)",
+          fontFamily: "var(--font-mono)",
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        {initial}
+      </button>
+
+      {open && (
+        <div
+          className="card"
+          style={{ position: "absolute", right: 0, top: 42, minWidth: 210, padding: 12, zIndex: 30 }}
+        >
+          <div className="mono muted" style={{ fontSize: 12, marginBottom: 10, wordBreak: "break-all" }}>
+            {label}
+          </div>
+          <button onClick={handleLogout} className="btn btn-secondary btn-sm" style={{ width: "100%" }} disabled={loggingOut}>
+            {loggingOut ? "Logging out…" : "Log out"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+--- src/components/SubmitButton.jsx ---
+
+"use client";
+
+import { useFormStatus } from "react-dom";
+
+export default function SubmitButton({ children, className = "btn btn-primary", pendingText }) {
+  const { pending } = useFormStatus();
+  return (
+    <button type="submit" className={className} disabled={pending}>
+      {pending ? pendingText || "Working…" : children}
+    </button>
+  );
+}
+
+
+--- src/components/judge/JudgeScoringApp.jsx ---
+
+"use client";
+
+import { useMemo, useState, useEffect } from "react";
+import { submitScore } from "@/app/judge/actions";
+
+export default function JudgeScoringApp({ roundsData }) {
+  const activeRounds = roundsData.filter((r) => r.round.status !== "completed");
+  const list = activeRounds.length ? activeRounds : roundsData;
+
+  const [roundIndex, setRoundIndex] = useState(0);
+  const [teamId, setTeamId] = useState(list[0]?.teams[0]?.id || "");
+
+  const current = list[roundIndex];
+
+  if (!list.length) {
+    return <div className="empty">You don&apos;t have any teams assigned yet. Check back once your organizer sets up assignments.</div>;
+  }
+
+  function handleRoundChange(index) {
+    setRoundIndex(index);
+    setTeamId(list[index]?.teams[0]?.id || "");
+  }
+
+  function handleNextTeam() {
+    const currentIndex = current.teams.findIndex(t => t.id === teamId);
+    if (currentIndex < current.teams.length - 1) {
+      setTeamId(current.teams[currentIndex + 1].id);
+    }
+  }
+
+  function handlePrevTeam() {
+    const currentIndex = current.teams.findIndex(t => t.id === teamId);
+    if (currentIndex > 0) {
+      setTeamId(current.teams[currentIndex - 1].id);
+    }
+  }
+
+  const selectedTeam = current.teams.find((t) => t.id === teamId);
+  const existingSubmission = current.submissions.find((s) => s.team_id === teamId);
+  const currentIndex = current.teams.findIndex(t => t.id === teamId);
+
+  return (
+    <div>
+      {list.length > 1 && (
+        <div className="field" style={{ maxWidth: 320, marginBottom: 24 }}>
+          <label htmlFor="round-select">Round</label>
+          <select
+            id="round-select"
+            className="input"
+            value={roundIndex}
+            onChange={(e) => handleRoundChange(Number(e.target.value))}
+          >
+            {list.map((r, i) => (
+              <option key={r.round.id} value={i}>
+                {r.round.name} ({r.round.status})
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div className="scoring-layout">
+        <div className="scoring-sidebar">
+          <h3 className="eyebrow" style={{ padding: "0 4px" }}>Teams ({current.teams.length})</h3>
+          {!current.teams.length && <div className="muted" style={{ fontSize: 13, padding: "0 4px" }}>No teams assigned</div>}
+          {current.teams.map((t) => {
+            const sub = current.submissions.find((s) => s.team_id === t.id);
+            const isDone = sub?.submitted;
+            const isActive = t.id === teamId;
+            return (
+              <button 
+                key={t.id} 
+                className={`team-nav-btn ${isActive ? 'active' : ''}`}
+                onClick={() => setTeamId(t.id)}
+              >
+                <span>{t.name}</span>
+                {isDone && <span className="status-dot done" title="Evaluated"></span>}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="scoring-main">
+          {selectedTeam ? (
+            <ScoreForm
+              key={`${current.round.id}-${teamId}`}
+              roundId={current.round.id}
+              team={selectedTeam}
+              criteria={current.criteria}
+              existingSubmission={existingSubmission}
+              onNext={currentIndex < current.teams.length - 1 ? handleNextTeam : null}
+              onPrev={currentIndex > 0 ? handlePrevTeam : null}
+            />
+          ) : (
+            <div className="empty">Select a team to score</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScoreForm({ roundId, team, criteria, existingSubmission, onNext, onPrev }) {
+  const initialScores = useMemo(() => {
+    const map = {};
+    criteria.forEach((c) => {
+      const existing = existingSubmission?.score_details?.find((s) => s.criterion_id === c.id);
+      map[c.id] = existing ? existing.value : "";
+    });
+    return map;
+  }, [criteria, existingSubmission]);
+
+  const [scores, setScores] = useState(initialScores);
+  const [feedback, setFeedback] = useState(existingSubmission?.feedback || "");
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState(null);
+  const [saveIndicator, setSaveIndicator] = useState("");
+
+  const total = criteria.reduce((sum, c) => sum + (Number(scores[c.id]) || 0), 0);
+  const maxTotal = criteria.reduce((sum, c) => sum + Number(c.max_score), 0);
+
+  // Auto-clear success message
+  useEffect(() => {
+    if (status?.success || saveIndicator) {
+      const timer = setTimeout(() => {
+        setStatus(null);
+        setSaveIndicator("");
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [status, saveIndicator]);
+
+  async function handleSubmit(e, goNext = false) {
+    if (e && e.preventDefault) e.preventDefault();
+    setBusy(true);
+    setStatus(null);
+    const res = await submitScore({ roundId, teamId: team.id, feedback, scores });
+    setBusy(false);
+    
+    if (res.error) {
+      setStatus({ error: res.error });
+    } else {
+      if (goNext && onNext) {
+        onNext();
+      } else {
+        setSaveIndicator(existingSubmission?.submitted ? "Updated successfully!" : "Submitted successfully!");
+      }
+    }
+  }
+
+  if (!criteria.length) {
+    return <div className="alert alert-error">This round has no judging criteria yet — ask your organizer to add some.</div>;
+  }
+
+  return (
+    <form onSubmit={(e) => handleSubmit(e, false)} className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+        <div>
+          <h2 className="title" style={{ fontSize: 24, marginBottom: 8 }}>{team.name}</h2>
+          {team.members && <p className="muted" style={{ fontSize: 14, marginBottom: 8 }}>{team.members}</p>}
+          {team.project_link && (
+            <a href={team.project_link} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: 13, color: "var(--accent)" }}>
+              {team.project_link} ↗
+            </a>
+          )}
+        </div>
+        {existingSubmission?.submitted && <span className="badge badge-active">submitted — editable</span>}
+      </div>
+
+      {status?.error && <div className="alert alert-error">{status.error}</div>}
+      {status?.success && <div className="alert alert-success">{status.success}</div>}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 24, marginBottom: 24 }}>
+        {criteria.map((c) => {
+          const maxVal = Math.floor(Number(c.max_score));
+          // Generate an array [0, 1, ..., maxVal] for the bubbles
+          const bubbleOptions = Array.from({ length: maxVal + 1 }, (_, i) => i);
+          
+          return (
+            <div key={c.id}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                <label className="eyebrow" style={{ margin: 0 }}>{c.name}</label>
+                <span className="mono muted" style={{ fontSize: 12 }}>Score: {scores[c.id] || 0} / {c.max_score}</span>
+              </div>
+              
+              <div className="bubbles">
+                {bubbleOptions.map(val => (
+                  <button
+                    key={val}
+                    type="button"
+                    className={`bubble-btn ${Number(scores[c.id]) === val && scores[c.id] !== "" ? 'active' : ''}`}
+                    onClick={() => setScores((prev) => ({ ...prev, [c.id]: val }))}
+                  >
+                    {val}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="field">
+        <label htmlFor="feedback" className="eyebrow">Feedback (Optional)</label>
+        <textarea
+          id="feedback"
+          className="textarea"
+          value={feedback}
+          onChange={(e) => setFeedback(e.target.value)}
+          placeholder="What stood out, what could improve…"
+          style={{ minHeight: 100 }}
+        />
+      </div>
+
+      <div style={{ borderTop: "1px solid var(--border)", paddingTop: 24, marginTop: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <span className="score-big">Total: {total} / {maxTotal}</span>
+          {saveIndicator && <span className="muted" style={{ fontSize: 13, color: "var(--accent)" }}>{saveIndicator}</span>}
+        </div>
+        
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" className="btn btn-secondary" onClick={onPrev} disabled={!onPrev || busy}>
+              &larr; Prev
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={(e) => handleSubmit(e, false)} disabled={busy}>
+              {busy ? "Saving…" : "Save"}
+            </button>
+          </div>
+          
+          <button 
+            type="button" 
+            className="btn btn-primary" 
+            onClick={(e) => handleSubmit(e, true)} 
+            disabled={busy}
+          >
+            {busy ? "Saving…" : (onNext ? "Save & Next &rarr;" : "Save (Done)")}
+          </button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+
+--- src/components/judge/JudgeLoginForm.jsx ---
+
+"use client";
+
+import { useFormState } from "react-dom";
+import { logInJudge } from "@/app/judge/actions";
+import SubmitButton from "@/components/SubmitButton";
+
+const initialState = { error: null };
+
+export default function JudgeLoginForm() {
+  const [state, formAction] = useFormState(logInJudge, initialState);
+
+  return (
+    <>
+      {state?.error && <div className="alert alert-error">{state.error}</div>}
+
+      <form action={formAction} className="card">
+        <div className="field">
+          <label htmlFor="judgeCode">Judge ID</label>
+          <input className="input mono" id="judgeCode" name="judgeCode" required autoFocus />
+        </div>
+        <div className="field">
+          <label htmlFor="password">Password</label>
+          <input className="input" id="password" name="password" type="password" required />
+        </div>
+        <SubmitButton pendingText="Logging in…">Log in</SubmitButton>
+      </form>
+    </>
+  );
+      }
+
+
+--- src/components/OrganizerTopbar.jsx ---
+
+import Link from "next/link";
+import ProfileMenu from "@/components/ProfileMenu";
+
+export default function OrganizerTopbar({ email }) {
+  return (
+    <div className="topbar">
+      <div className="topbar-inner">
+        <Link href="/organizer/dashboard" className="brand">
+          <span className="dot" />
+          HU Judging
+        </Link>
+        {email && <ProfileMenu label={email} loginPath="/organizer/login" />}
+      </div>
+    </div>
+  );
+}
+
+
+--- src/components/GoogleSignInButton.jsx ---
+
+"use client";
+
+import { createClient } from "@/lib/supabase/client";
+
+export default function GoogleSignInButton() {
+  const supabase = createClient();
+
+  const handleGoogleSignIn = async () => {
+    await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/organizer/auth/callback`,
+      },
+    });
+  };
+
+  return (
+    <button onClick={handleGoogleSignIn} className="btn btn-secondary" type="button">
+      Continue with Google
+    </button>
+  );
+}
+
+
+--- src/components/round/CriteriaPanel.jsx ---
+
+"use client";
+
+import { useState } from "react";
+import { addCriterion, deleteCriterion } from "@/app/organizer/hackathons/actions";
+import SubmitButton from "@/components/SubmitButton";
+
+export default function CriteriaPanel({ hackathonId, roundId, criteria }) {
+  const [error, setError] = useState(null);
+
+  async function handleAdd(formData) {
+    const res = await addCriterion(hackathonId, roundId, formData);
+    if (res?.error) setError(res.error);
+    else {
+      setError(null);
+      document.getElementById("add-criterion-form")?.reset();
+    }
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <h2 className="subtitle">Judging criteria</h2>
+
+      {!criteria?.length && <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>No criteria set yet — judges can&apos;t score until you add at least one.</p>}
+
+      {criteria?.map((c) => (
+        <div key={c.id} className="list-item">
+          <span>{c.name} <span className="muted mono">/ {c.max_score}</span></span>
+          <button className="btn btn-danger btn-sm" onClick={() => deleteCriterion(hackathonId, roundId, c.id)}>
+            Remove
+          </button>
+        </div>
+      ))}
+
+      <form id="add-criterion-form" action={handleAdd} style={{ marginTop: 16, display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+        {error && <div className="alert alert-error" style={{ width: "100%" }}>{error}</div>}
+        <div className="field" style={{ flex: 1, minWidth: 160, marginBottom: 0 }}>
+          <label htmlFor="criterion-name">Criterion</label>
+          <input className="input" id="criterion-name" name="name" placeholder="e.g. Innovation" required />
+        </div>
+        <div className="field" style={{ width: 100, marginBottom: 0 }}>
+          <label htmlFor="criterion-max">Max score</label>
+          <input className="input" id="criterion-max" name="maxScore" type="number" defaultValue={10} />
+        </div>
+        <SubmitButton pendingText="Adding…">Add</SubmitButton>
+      </form>
+    </div>
+  );
+}
+
+
+--- src/components/round/TeamSelectionPanel.jsx ---
+
+"use client";
+
+import { useState } from "react";
+import { setRoundTeams, autoAdvanceTopN } from "@/app/organizer/hackathons/actions";
+import SubmitButton from "@/components/SubmitButton";
+
+export default function TeamSelectionPanel({ hackathonId, roundId, allTeams, selectedTeamIds, previousRoundId }) {
+  const [selected, setSelected] = useState(new Set(selectedTeamIds));
+  const [status, setStatus] = useState(null);
+  const [topN, setTopN] = useState(15);
+  const [busy, setBusy] = useState(false);
+
+  function toggle(id) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  async function save() {
+    setBusy(true);
+    const res = await setRoundTeams(hackathonId, roundId, Array.from(selected));
+    setBusy(false);
+    setStatus(res.error ? { error: res.error } : { success: "Saved." });
+  }
+
+  async function handleAutoAdvance() {
+    if (!previousRoundId) return;
+    setBusy(true);
+    const res = await autoAdvanceTopN(hackathonId, roundId, previousRoundId, Number(topN));
+    setBusy(false);
+    if (res.error) {
+      setStatus({ error: res.error });
+    } else {
+      setStatus({ success: `Advanced top ${topN}.` });
+      window.location.reload();
+    }
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <h2 className="subtitle">Teams in this round</h2>
+
+      {previousRoundId && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+          <span className="muted" style={{ fontSize: 13 }}>Auto-advance top</span>
+          <input
+            className="input mono"
+            style={{ width: 70 }}
+            type="number"
+            value={topN}
+            onChange={(e) => setTopN(e.target.value)}
+          />
+          <span className="muted" style={{ fontSize: 13 }}>from the previous round</span>
+          <button className="btn btn-secondary btn-sm" onClick={handleAutoAdvance} disabled={busy}>
+            Advance
+          </button>
+        </div>
+      )}
+
+      {status?.error && <div className="alert alert-error">{status.error}</div>}
+      {status?.success && <div className="alert alert-success">{status.success}</div>}
+
+      {!allTeams?.length && <div className="empty">No teams in this hackathon yet.</div>}
+
+      <div style={{ maxHeight: 320, overflowY: "auto", marginBottom: 16 }}>
+        {allTeams?.map((t) => (
+          <label key={t.id} className="list-item" style={{ cursor: "pointer" }}>
+            <span>{t.name}</span>
+            <input type="checkbox" checked={selected.has(t.id)} onChange={() => toggle(t.id)} />
+          </label>
+        ))}
+      </div>
+
+      <button className="btn btn-primary" onClick={save} disabled={busy}>
+        {busy ? "Saving…" : "Save team list"}
+      </button>
+    </div>
+  );
+}
+
+
+--- src/components/round/ResultsView.jsx ---
+
+"use client";
+
+import { useMemo, useState } from "react";
+
+function submissionTotal(sub) {
+  return (sub.score_details || []).reduce((sum, s) => sum + Number(s.value), 0);
+}
+
+export default function ResultsView({ teams, judges, criteria, assignments, submissions }) {
+  const [tab, setTab] = useState("overall");
+  const [judgeFilter, setJudgeFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const maxTotal = useMemo(() => criteria.reduce((sum, c) => sum + Number(c.max_score), 0), [criteria]);
+
+  const subByJudgeTeam = useMemo(() => {
+    const map = {};
+    submissions.forEach((s) => {
+      map[`${s.judge_id}:${s.team_id}`] = s;
+    });
+    return map;
+  }, [submissions]);
+
+  // ── Judge view rows: one row per (judge, assigned team) ──
+  const judgeRows = useMemo(() => {
+    return assignments
+      .map((a) => {
+        const judge = judges.find((j) => j.id === a.judge_id);
+        const team = teams.find((t) => t.id === a.team_id);
+        const sub = subByJudgeTeam[`${a.judge_id}:${a.team_id}`];
+        return {
+          judgeId: a.judge_id,
+          judgeName: judge?.name || judge?.judge_code || "—",
+          teamId: a.team_id,
+          teamName: team?.name || "—",
+          submitted: !!sub?.submitted,
+          total: sub ? submissionTotal(sub) : null,
+          feedback: sub?.feedback || "",
+        };
+      })
+      .filter((r) => (judgeFilter === "all" ? true : r.judgeId === judgeFilter))
+      .filter((r) => {
+        if (statusFilter === "all") return true;
+        if (statusFilter === "submitted") return r.submitted;
+        return !r.submitted;
+      });
+  }, [assignments, judges, teams, subByJudgeTeam, judgeFilter, statusFilter]);
+
+  // ── Overall leaderboard: aggregate submitted scores per team ──
+  const leaderboard = useMemo(() => {
+    const byTeam = {};
+    submissions
+      .filter((s) => s.submitted)
+      .forEach((s) => {
+        if (!byTeam[s.team_id]) byTeam[s.team_id] = [];
+        byTeam[s.team_id].push(submissionTotal(s));
+      });
+
+    return teams
+      .map((t) => {
+        const totals = byTeam[t.id] || [];
+        const finalScore = totals.length ? totals.reduce((a, b) => a + b, 0) / totals.length : null;
+        return { teamId: t.id, teamName: t.name, judgeCount: totals.length, finalScore };
+      })
+      .sort((a, b) => (b.finalScore ?? -1) - (a.finalScore ?? -1));
+  }, [teams, submissions]);
+
+  return (
+    <div>
+      <div className="tabs">
+        <button className={`tab ${tab === "overall" ? "active" : ""}`} onClick={() => setTab("overall")}>
+          overall leaderboard
+        </button>
+        <button className={`tab ${tab === "judges" ? "active" : ""}`} onClick={() => setTab("judges")}>
+          judge view
+        </button>
+      </div>
+
+      {tab === "overall" && (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Rank</th>
+              <th>Team</th>
+              <th>Judges scored</th>
+              <th>Final score</th>
+            </tr>
+          </thead>
+          <tbody>
+            {leaderboard.map((row, i) => (
+              <tr key={row.teamId}>
+                <td><span className="rank">#{i + 1}</span></td>
+                <td>{row.teamName}</td>
+                <td className="muted">{row.judgeCount}</td>
+                <td className="score-big">
+                  {row.finalScore === null ? "—" : `${row.finalScore.toFixed(1)} / ${maxTotal}`}
+                </td>
+              </tr>
+            ))}
+            {!leaderboard.length && (
+              <tr>
+                <td colSpan={4} className="empty">No teams in this round yet.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      )}
+
+      {tab === "judges" && (
+        <div>
+          <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+            <select className="input" style={{ width: 200 }} value={judgeFilter} onChange={(e) => setJudgeFilter(e.target.value)}>
+              <option value="all">All judges</option>
+              {judges.map((j) => (
+                <option key={j.id} value={j.id}>{j.name || j.judge_code}</option>
+              ))}
+            </select>
+            <select className="input" style={{ width: 180 }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="all">All statuses</option>
+              <option value="submitted">Submitted</option>
+              <option value="pending">Pending</option>
+            </select>
+          </div>
+
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Judge</th>
+                <th>Team</th>
+                <th>Status</th>
+                <th>Score</th>
+                <th>Feedback</th>
+              </tr>
+            </thead>
+            <tbody>
+              {judgeRows.map((r, i) => (
+                <tr key={i}>
+                  <td>{r.judgeName}</td>
+                  <td>{r.teamName}</td>
+                  <td>
+                    <span className={`badge ${r.submitted ? "badge-active" : "badge-warn"}`}>
+                      {r.submitted ? "submitted" : "pending"}
+                    </span>
+                  </td>
+                  <td className="mono">{r.total === null ? "—" : `${r.total} / ${maxTotal}`}</td>
+                  <td className="muted" style={{ maxWidth: 280 }}>{r.feedback}</td>
+                </tr>
+              ))}
+              {!judgeRows.length && (
+                <tr>
+                  <td colSpan={5} className="empty">No matching rows.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+--- src/components/round/JudgeAssignmentPanel.jsx ---
+
+"use client";
+
+import { useState, useTransition } from "react";
+import { setJudgeAssignments } from "@/app/organizer/hackathons/actions";
+
+function JudgeRow({ hackathonId, roundId, judge, roundTeams, initialTeamIds }) {
+  const [selected, setSelected] = useState(new Set(initialTeamIds));
+  const [isPending, startTransition] = useTransition();
+  const [justSaved, setJustSaved] = useState(false);
+
+  function toggle(id) {
+    const next = new Set(selected);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setSelected(next);
+    setJustSaved(false);
+
+    startTransition(async () => {
+      await setJudgeAssignments(hackathonId, roundId, judge.id, Array.from(next));
+      setJustSaved(true);
+    });
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div>
+          <div style={{ fontWeight: 600 }}>{judge.name || judge.judge_code}</div>
+          <div className="mono muted" style={{ fontSize: 12 }}>{judge.judge_code}</div>
+        </div>
+        <span className="muted" style={{ fontSize: 12 }}>
+          {isPending ? "Saving…" : justSaved ? "Saved ✓" : ""}
+        </span>
+      </div>
+
+      {!roundTeams?.length && <p className="muted" style={{ fontSize: 13 }}>Add teams to this round first.</p>}
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {roundTeams?.map((t) => {
+          const active = selected.has(t.id);
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => toggle(t.id)}
+              className={`badge ${active ? "badge-active" : ""}`}
+              style={{ cursor: "pointer", background: active ? undefined : "transparent" }}
+            >
+              {t.name}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export default function JudgeAssignmentPanel({ hackathonId, roundId, judges, roundTeams, assignments }) {
+  return (
+    <div>
+      <h2 className="subtitle">Assign teams to judges</h2>
+      <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+        Tap a team to toggle it for that judge — saves automatically.
+      </p>
+      {!judges?.length && <div className="empty">No judges added to this hackathon yet.</div>}
+      {judges?.map((j) => {
+        const initialTeamIds = assignments.filter((a) => a.judge_id === j.id).map((a) => a.team_id);
+        return (
+          <JudgeRow
+            key={j.id}
+            hackathonId={hackathonId}
+            roundId={roundId}
+            judge={j}
+            roundTeams={roundTeams}
+            initialTeamIds={initialTeamIds}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+
+--- src/middleware.js ---
+
+import { updateSession } from "@/lib/supabase/middleware";
+
+export async function middleware(request) {
+  return await updateSession(request);
+}
+
+export const config = {
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
+};
+
+
+--- src/lib/supabase/client.js ---
+
+import { createBrowserClient } from "@supabase/ssr";
+
+export function createClient() {
+  return createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  );
+}
+
+
+--- src/lib/supabase/server.js ---
+
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
+
+// Use inside Server Components, Server Actions, and Route Handlers.
+export async function createClient() {
+  const cookieStore = await cookies();
+
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            );
+          } catch {
+            // Called from a Server Component during render — middleware
+            // refreshes the session on the next request, so this is safe to ignore.
+          }
+        },
+      },
+    }
+  );
+}
+
+// Admin client — service role key, server-only. Used to create/update the
+// Supabase Auth accounts that back judge logins. Never import this from
+// a Client Component or expose the key with a NEXT_PUBLIC_ prefix.
+export function createAdminClient() {
+  console.log("service key present:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
+    {
+      cookies: {
+        getAll() {
+          return [];
+        },
+        setAll() {},
+      },
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    }
+  );
+}
+
+
+--- src/lib/supabase/middleware.js ---
+
+import { createServerClient } from "@supabase/ssr";
+import { NextResponse } from "next/server";
+
+export async function updateSession(request) {
+  let response = NextResponse.next({ request });
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+          response = NextResponse.next({ request });
+          cookiesToSet.forEach(({ name, value, options }) =>
+            response.cookies.set(name, value, options)
+          );
+        },
+      },
+    }
+  );
+
+  // Refreshes the session cookie if needed — required for server-rendered
+  // pages to see an up-to-date auth state.
+  await supabase.auth.getUser();
+
+  return response;
+}
