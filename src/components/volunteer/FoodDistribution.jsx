@@ -1,8 +1,8 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { searchTeams, markFoodIssued } from "@/app/volunteer/actions";
+import { searchTeams, issueMemberCoupon, collectPayment } from "@/app/volunteer/actions";
 import { toast } from "sonner";
-import { Search, CheckCircle, Ticket, AlertTriangle, AlertCircle } from "lucide-react";
+import { Search, CheckCircle, Ticket, AlertTriangle, AlertCircle, User, CreditCard } from "lucide-react";
 
 export default function FoodDistribution({ hackathon }) {
   const hackathonId = hackathon.id;
@@ -31,33 +31,56 @@ export default function FoodDistribution({ hackathon }) {
     return () => clearTimeout(timer);
   }, [query, fetchTeams]);
 
-  const handleIssueCoupon = async (team) => {
-    if (team.status !== "Checked-In") {
-      toast.error("Team is not checked in.");
-      return;
-    }
-    if (!team.food_purchased || team.food_payment_status !== "Paid") {
-      toast.error("Team is not eligible for food.");
-      return;
-    }
-    
-    setProcessingId(team.id);
-    const res = await markFoodIssued(team.id, hackathonId);
+  const handleIssueCoupon = async (teamId, memberIndex) => {
+    setProcessingId(`${teamId}-${memberIndex}`);
+    const res = await issueMemberCoupon(teamId, hackathonId, memberIndex);
     setProcessingId(null);
     
     if (res.error) {
       toast.error(res.error);
     } else {
-      toast.success(`Coupons issued to ${team.name}`);
+      toast.success("Coupon distributed successfully!");
+      fetchTeams();
+    }
+  };
+
+  const handleCollectPayment = async (team) => {
+    if (!confirm(`Confirm payment collected for team ${team.name}?`)) return;
+    setProcessingId(`payment-${team.id}`);
+    const res = await collectPayment(team.id, hackathonId);
+    setProcessingId(null);
+
+    if (res.error) {
+      toast.error(res.error);
+    } else {
+      toast.success(`Payment collected! Team ${team.name} is now eligible for food.`);
       fetchTeams();
     }
   };
 
   const stats = useMemo(() => {
+    let eligibleCoupons = 0;
+    let distributedCoupons = 0;
+    
+    teams.forEach(t => {
+      if (t.food_purchased && t.food_payment_status === "Paid") {
+        let members = [];
+        try { members = JSON.parse(t.members || "[]"); } catch(e) {}
+        
+        members.forEach(m => {
+          if (m.status === 'Present') {
+            eligibleCoupons++;
+            if (m.food_issued) distributedCoupons++;
+          }
+        });
+      }
+    });
+
     return {
-      eligible: teams.filter(t => t.food_purchased && t.food_payment_status === "Paid").length,
-      distributed: teams.filter(t => t.food_issued).length,
-      notCheckedIn: teams.filter(t => t.status !== "Checked-In").length,
+      eligible: eligibleCoupons,
+      distributed: distributedCoupons,
+      remaining: Math.max(0, eligibleCoupons - distributedCoupons),
+      notCheckedIn: teams.filter(t => t.status === "Registered").length,
     };
   }, [teams]);
 
@@ -68,19 +91,19 @@ export default function FoodDistribution({ hackathon }) {
         <div style={{ display: 'flex', gap: '3rem', flex: 1, justifyContent: 'flex-start' }}>
           <div style={{ textAlign: 'center' }}>
             <div className="score-big">{stats.eligible}</div>
-            <div className="eyebrow">Eligible Teams</div>
+            <div className="eyebrow">Eligible Coupons</div>
           </div>
           <div style={{ textAlign: 'center' }}>
             <div className="score-big" style={{ color: 'var(--success)' }}>{stats.distributed}</div>
             <div className="eyebrow">Distributed</div>
           </div>
           <div style={{ textAlign: 'center' }}>
-            <div className="score-big" style={{ color: 'var(--accent-primary)' }}>{Math.max(0, stats.eligible - stats.distributed)}</div>
+            <div className="score-big" style={{ color: 'var(--accent-primary)' }}>{stats.remaining}</div>
             <div className="eyebrow">Remaining</div>
           </div>
           <div style={{ textAlign: 'center' }}>
             <div className="score-big" style={{ color: 'var(--warn)' }}>{stats.notCheckedIn}</div>
-            <div className="eyebrow">Not Checked In</div>
+            <div className="eyebrow">Teams Not Checked In</div>
           </div>
         </div>
       </div>
@@ -112,95 +135,142 @@ export default function FoodDistribution({ hackathon }) {
           <div className="empty">No teams found.</div>
         ) : (
           teams.map(t => {
-            const isCheckedIn = t.status === "Checked-In";
-            const isEligible = t.food_purchased && t.food_payment_status === "Paid";
+            let members = [];
+            try { members = JSON.parse(t.members || "[]"); } catch(e) {}
             
-            let membersCount = 0;
-            try { membersCount = JSON.parse(t.members || "[]").length; } catch(e) {}
+            const presentCount = members.filter(m => m.status === 'Present').length;
+            const totalCount = members.length;
+            const isFullyCheckedIn = t.status === "Checked-In";
+            const isPartiallyCheckedIn = t.status === "Partially Checked In";
+            const isPaid = t.food_purchased && t.food_payment_status === "Paid";
+            const isUnpaid = t.food_purchased && t.food_payment_status === "Unpaid";
+            const notIncluded = !t.food_purchased;
+            
+            let couponsAvailable = 0;
+            let couponsDistributed = 0;
+            
+            if (isPaid) {
+              members.forEach(m => {
+                if (m.status === 'Present') {
+                  if (m.food_issued) couponsDistributed++;
+                  else couponsAvailable++;
+                }
+              });
+            }
 
             return (
-              <div key={t.id} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', opacity: isCheckedIn ? 1 : 0.8 }}>
+              <div key={t.id} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', opacity: (isFullyCheckedIn || isPartiallyCheckedIn) ? 1 : 0.7 }}>
+                
+                {/* Team Header & Status */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
-                  
-                  {/* Team Details */}
                   <div style={{ flex: 1, minWidth: '300px' }}>
                     <h3 style={{ fontSize: '1.25rem', margin: '0 0 0.5rem 0', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                       {t.name}
                       <span className="muted text-sm mono">#{t.team_code}</span>
                     </h3>
-                    
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '1rem' }}>
-                      <div>
-                        <div className="muted text-xs">Leader Name</div>
-                        <div style={{ fontWeight: 500 }}>{t.leader_name || "N/A"}</div>
-                      </div>
-                      <div>
-                        <div className="muted text-xs">Leader Phone</div>
-                        <div style={{ fontWeight: 500 }}>{t.phone || "N/A"}</div>
-                      </div>
-                      <div>
-                        <div className="muted text-xs">Team Size</div>
-                        <div style={{ fontWeight: 500 }}>{membersCount} Members</div>
-                      </div>
-                      {t.college && (
-                        <div>
-                          <div className="muted text-xs">College</div>
-                          <div style={{ fontWeight: 500 }}>{t.college}</div>
-                        </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                      {/* Check-In Badge */}
+                      {isFullyCheckedIn ? (
+                        <span className="badge badge-active">Fully Checked In</span>
+                      ) : isPartiallyCheckedIn ? (
+                        <span className="badge badge-warning">{presentCount} / {totalCount} Checked In</span>
+                      ) : (
+                        <span className="badge badge-error">Not Checked In</span>
                       )}
-                    </div>
-                  </div>
-                  
-                  {/* Status & Action */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', minWidth: '250px' }}>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      <span className={`badge ${isCheckedIn ? 'badge-active' : 'badge-warning'}`}>
-                        {isCheckedIn ? "Checked In" : "Not Checked In"}
-                      </span>
-                      
-                      {!t.food_purchased ? (
+
+                      {/* Food Payment Badge */}
+                      {notIncluded ? (
                         <span className="badge badge-default">Food Not Included</span>
+                      ) : isPaid ? (
+                        <span className="badge badge-active">Food Paid ✅</span>
                       ) : (
-                        <span className={`badge ${t.food_payment_status === 'Paid' ? 'badge-active' : 'badge-error'}`}>
-                          Food: {t.food_payment_status}
-                        </span>
+                        <span className="badge badge-warning">Food Unpaid</span>
                       )}
                       
-                      {isEligible && (
-                        <span className="badge badge-default">Qty: {t.food_quantity || membersCount}</span>
-                      )}
-                    </div>
-                    
-                    <div style={{ marginTop: '0.5rem' }}>
-                      {t.food_issued ? (
-                        <div style={{ padding: '0.75rem 1rem', background: 'var(--success-soft)', borderRadius: 8, border: '1px solid rgba(16, 185, 129, 0.2)', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', fontWeight: 600 }}>
-                          <CheckCircle size={18} /> Coupon Distributed
-                          <span className="text-xs" style={{ marginLeft: 'auto', fontWeight: 400 }}>
-                            {new Date(t.food_issued_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                      ) : !isCheckedIn ? (
-                        <div style={{ padding: '0.75rem 1rem', background: 'rgba(245, 158, 11, 0.1)', borderRadius: 8, border: '1px solid rgba(245, 158, 11, 0.2)', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--warn)', fontWeight: 600 }}>
-                          <AlertTriangle size={18} /> Not Checked In ⚠️
-                        </div>
-                      ) : !isEligible ? (
-                        <div style={{ padding: '0.75rem 1rem', background: 'rgba(239, 68, 68, 0.1)', borderRadius: 8, border: '1px solid rgba(239, 68, 68, 0.2)', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--error)', fontWeight: 600 }}>
-                          <AlertCircle size={18} /> Not Eligible ❌
-                        </div>
-                      ) : (
-                        <button 
-                          className="btn btn-accent" 
-                          style={{ width: '100%', padding: '0.75rem' }}
-                          disabled={processingId === t.id}
-                          onClick={() => handleIssueCoupon(t)}
-                        >
-                          <Ticket size={18} /> {processingId === t.id ? "Processing..." : "Mark Coupon Distributed"}
-                        </button>
+                      {/* Coupon Counts */}
+                      {isPaid && (
+                        <span className="badge badge-default" style={{ fontWeight: 600 }}>
+                          {couponsAvailable} Available · {couponsDistributed} Distributed
+                        </span>
                       )}
                     </div>
                   </div>
 
+                  {/* Payment Collection Action */}
+                  {isUnpaid && (
+                    <div style={{ minWidth: '200px' }}>
+                      <div style={{ padding: '0.75rem 1rem', background: 'rgba(245, 158, 11, 0.1)', borderRadius: 8, border: '1px solid rgba(245, 158, 11, 0.2)', marginBottom: '0.5rem', color: 'var(--warn)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <AlertTriangle size={18} /> Food Payment Required
+                      </div>
+                      <button 
+                        className="btn btn-primary" 
+                        style={{ width: '100%', padding: '0.75rem' }}
+                        disabled={processingId === `payment-${t.id}`}
+                        onClick={() => handleCollectPayment(t)}
+                      >
+                        <CreditCard size={18} /> {processingId === `payment-${t.id}` ? "Processing..." : "Collect Payment & Activate"}
+                      </button>
+                    </div>
+                  )}
                 </div>
+
+                {/* Member Coupon List */}
+                {isPaid && (
+                  <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    <div className="eyebrow" style={{ marginBottom: '0.5rem' }}>Member Coupons</div>
+                    
+                    {members.length === 0 ? (
+                      <div className="muted text-sm">No members found.</div>
+                    ) : (
+                      <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
+                        {members.map((m, index) => {
+                          const isPresent = m.status === 'Present';
+                          const isIssued = m.food_issued;
+                          
+                          return (
+                            <div key={index} style={{
+                              display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem',
+                              border: `1px solid ${isIssued ? 'rgba(16, 185, 129, 0.3)' : 'var(--border-subtle)'}`,
+                              background: isIssued ? 'rgba(16, 185, 129, 0.05)' : 'var(--bg-elevated)',
+                              borderRadius: 8,
+                              opacity: isPresent ? 1 : 0.6
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                <div style={{ background: isPresent ? 'var(--accent-primary)' : 'var(--bg)', color: isPresent ? '#fff' : 'var(--text-muted)', width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                  <User size={16} />
+                                </div>
+                                <div>
+                                  <div style={{ fontWeight: 500 }}>{m.name}</div>
+                                  <div className="text-xs muted">{isPresent ? "Checked In" : "Not Checked In"}</div>
+                                </div>
+                              </div>
+                              
+                              <div>
+                                {!isPresent ? (
+                                  <span className="badge text-xs" style={{ background: 'transparent' }}>Not Eligible</span>
+                                ) : isIssued ? (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--success)', fontWeight: 600, fontSize: '0.85rem' }}>
+                                    <CheckCircle size={16} /> Given ✅
+                                  </div>
+                                ) : (
+                                  <button 
+                                    className="btn btn-accent" 
+                                    style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem' }}
+                                    disabled={processingId === `${t.id}-${index}`}
+                                    onClick={() => handleIssueCoupon(t.id, index)}
+                                  >
+                                    <Ticket size={16} /> Give Coupon
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+                
               </div>
             );
           })

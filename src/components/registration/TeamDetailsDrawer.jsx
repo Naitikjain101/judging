@@ -24,7 +24,7 @@ export default function TeamDetailsDrawer({ team, hackathon, onClose, onCheckInF
   const progressPercent = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
 
 
-  const handleFullSubmit = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     await onCheckInFull(team.id, members);
   };
@@ -140,9 +140,9 @@ export default function TeamDetailsDrawer({ team, hackathon, onClose, onCheckInF
 
         {/* Footer Actions */}
         <div style={{ padding: '1.5rem', borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-elevated)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <form onSubmit={handleFullSubmit}>
-            <SubmitButton className="btn btn-primary" style={{ width: '100%', padding: '1rem', fontSize: '1rem' }} pendingText="Checking in...">
-              <CheckCircle size={18} /> Check In Entire Team
+          <form onSubmit={handleSubmit}>
+            <SubmitButton className="btn btn-primary" style={{ width: '100%', padding: '1rem', fontSize: '1rem' }} pendingText="Saving...">
+              <CheckCircle size={18} /> Save Check-In Status
             </SubmitButton>
           </form>
         </div>

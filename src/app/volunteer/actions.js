@@ -51,10 +51,9 @@ export async function searchTeams(hackathonId, query) {
   return { teams: data };
 }
 
-export async function markFoodIssued(teamId, hackathonId) {
+export async function collectPayment(teamId, hackathonId) {
   const supabase = await createPortalClient("volunteer");
 
-  // 1. Validate volunteer assignment
   const volCheck = await getVolunteerHackathon(supabase);
   if (volCheck.error) return { error: volCheck.error };
   if (volCheck.hackathonId !== hackathonId) {
@@ -63,36 +62,83 @@ export async function markFoodIssued(teamId, hackathonId) {
 
   const admin = createAdminClient();
 
-  // 2. Verify team belongs to this hackathon and check eligibility
-  const { data: team } = await admin
+  const { data: team, error: teamErr } = await admin
     .from("teams")
-    .select("id, food_purchased, food_payment_status, status, food_issued")
+    .select("id, food_purchased, food_payment_status")
     .eq("id", teamId)
     .eq("hackathon_id", hackathonId)
     .single();
 
-  if (!team) return { error: "Team not found in this hackathon." };
+  if (teamErr || !team) return { error: "Team not found in this hackathon." };
+  if (!team.food_purchased) return { error: "Team did not request food." };
+  if (team.food_payment_status === "Paid") return { error: "Team has already paid." };
 
-  if (team.food_issued) {
-    return { error: "This team has already been issued their food coupons." };
+  const { error: updateErr } = await admin
+    .from("teams")
+    .update({ food_payment_status: "Paid" })
+    .eq("id", teamId)
+    .eq("hackathon_id", hackathonId);
+
+  if (updateErr) return { error: updateErr.message };
+
+  revalidatePath("/volunteer");
+  return { success: true };
+}
+
+export async function issueMemberCoupon(teamId, hackathonId, memberIndex) {
+  const supabase = await createPortalClient("volunteer");
+
+  const volCheck = await getVolunteerHackathon(supabase);
+  if (volCheck.error) return { error: volCheck.error };
+  if (volCheck.hackathonId !== hackathonId) {
+    return { error: "Unauthorized: you are not assigned to this hackathon." };
   }
 
-  if (team.status !== "Checked-In") {
-    return { error: "Team must be checked in first." };
-  }
+  const admin = createAdminClient();
 
+  // Fetch the team's current members array
+  const { data: team, error: teamErr } = await admin
+    .from("teams")
+    .select("id, food_purchased, food_payment_status, members")
+    .eq("id", teamId)
+    .eq("hackathon_id", hackathonId)
+    .single();
+
+  if (teamErr || !team) return { error: "Team not found in this hackathon." };
+  
   if (!team.food_purchased || team.food_payment_status !== "Paid") {
     return { error: "Team is not eligible for food (Not included or unpaid)." };
   }
 
-  // 3. Update the team
+  let members = [];
+  try {
+    members = JSON.parse(team.members || "[]");
+  } catch(e) {
+    return { error: "Failed to parse members data." };
+  }
+
+  if (memberIndex < 0 || memberIndex >= members.length) {
+    return { error: "Invalid member index." };
+  }
+
+  const member = members[memberIndex];
+
+  if (member.status !== "Present") {
+    return { error: "Member is not checked in." };
+  }
+
+  if (member.food_issued) {
+    return { error: "Coupon already issued for this member." };
+  }
+
+  // Update the specific member
+  member.food_issued = true;
+  member.food_issued_at = new Date().toISOString();
+  member.food_issued_by = volCheck.userId;
+
   const { error: updateErr } = await admin
     .from("teams")
-    .update({
-      food_issued: true,
-      food_issued_at: new Date().toISOString(),
-      food_issued_by: volCheck.userId
-    })
+    .update({ members: JSON.stringify(members) })
     .eq("id", teamId)
     .eq("hackathon_id", hackathonId);
 

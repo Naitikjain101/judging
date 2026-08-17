@@ -138,6 +138,7 @@ export default function TeamsPanel({ hackathonId, teams }) {
           <select className="input" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
             <option value="All">All Statuses</option>
             <option value="Registered">Registered</option>
+            <option value="Partially Checked In">Partially Checked In</option>
             <option value="Checked-In">Checked-In</option>
             <option value="Absent">Absent</option>
             <option value="Judging">Judging</option>
@@ -182,6 +183,7 @@ export default function TeamsPanel({ hackathonId, teams }) {
                 
                 let statusColor = '';
                 if (t.status === 'Checked-In') statusColor = 'badge-active';
+                else if (t.status === 'Partially Checked In') statusColor = 'badge-warning';
                 else if (t.status === 'Absent') statusColor = 'badge-error';
                 else if (t.status === 'Judging') statusColor = 'badge-info';
                 else if (t.status === 'Completed') statusColor = 'badge-success';

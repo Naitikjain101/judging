@@ -67,82 +67,78 @@ export async function checkInTeam(teamId, hackathonId, memberStates) {
     return { error: "Unauthorized: you are not assigned to this hackathon." };
   }
 
-  // Use admin client for reliable writes
   const admin = createAdminClient();
 
-  // 1. Verify team belongs to this hackathon and get current state
+  // 1. Verify team belongs to this hackathon
   const { data: team, error: teamErr } = await admin
     .from("teams")
-    .select("id, status, hackathon_id, members")
+    .select("id, status, hackathon_id, members, team_number, table_number")
     .eq("id", teamId)
     .eq("hackathon_id", hackathonId)
     .single();
 
   if (teamErr || !team) return { error: "Team not found in this hackathon." };
 
-  // 2. Get check-in rule from hackathon
-  const { data: hackathon } = await admin
-    .from("hackathons")
-    .select("check_in_rule")
-    .eq("id", hackathonId)
-    .single();
-
-  const checkInRule = hackathon?.check_in_rule || "ANY_MEMBER";
-
-  // 3. Evaluate member states
+  // 2. Evaluate member states to determine new status
   const presentMembers = (memberStates || []).filter((m) => m.status === "Present");
   const totalMembers = (memberStates || []).length;
-
+  
+  let newStatus = "Registered";
   if (totalMembers > 0) {
-    if (checkInRule === "ALL_MEMBERS" && presentMembers.length < totalMembers) {
-      return { error: `All members must be present for check-in. Only ${presentMembers.length}/${totalMembers} present.` };
-    }
-
-    if (checkInRule === "ANY_MEMBER" && presentMembers.length === 0) {
-      return { error: "At least one member must be present for check-in." };
-    }
-  }
-
-  // 4. Already checked in?
-  if (team.status === "Checked-In") return { error: "Team is already checked in." };
-
-  // 5. Atomic check-in number generation using a serializable approach
-  // Use FOR UPDATE with a subquery to get next number atomically
-  const { data: seqData, error: seqError } = await admin.rpc("atomic_next_team_number", {
-    p_hackathon_id: hackathonId,
-  });
-
-  let teamNumberStr, tableNumberVal;
-
-  if (seqError) {
-    // Fallback if RPC doesn't exist yet — use count-based approach with row lock
-    console.warn("atomic_next_team_number RPC not found, using fallback:", seqError.message);
-    const { count } = await admin
-      .from("teams")
-      .select("*", { count: "exact", head: true })
-      .eq("hackathon_id", hackathonId)
-      .eq("status", "Checked-In");
-
-    const seq = (count || 0) + 1;
-    teamNumberStr = `T-${String(seq).padStart(3, "0")}`;
-    tableNumberVal = seq;
+    if (presentMembers.length === 0) newStatus = "Registered";
+    else if (presentMembers.length < totalMembers) newStatus = "Partially Checked In";
+    else newStatus = "Checked-In";
   } else {
-    const seq = seqData;
-    teamNumberStr = `T-${String(seq).padStart(3, "0")}`;
-    tableNumberVal = seq;
+    // Fallback if no members are defined
+    newStatus = "Checked-In";
   }
 
-  // 6. Update the team
+  // 3. Generate team/table number if moving out of "Registered" and they don't have one
+  let teamNumberStr = team.team_number;
+  let tableNumberVal = team.table_number;
+
+  if (newStatus !== "Registered" && !team.team_number) {
+    const { data: seqData, error: seqError } = await admin.rpc("atomic_next_team_number", {
+      p_hackathon_id: hackathonId,
+    });
+
+    if (seqError) {
+      console.warn("atomic_next_team_number RPC not found, using fallback:", seqError.message);
+      const { count } = await admin
+        .from("teams")
+        .select("*", { count: "exact", head: true })
+        .eq("hackathon_id", hackathonId)
+        .neq("status", "Registered");
+
+      const seq = (count || 0) + 1;
+      teamNumberStr = `T-${String(seq).padStart(3, "0")}`;
+      tableNumberVal = seq;
+    } else {
+      const seq = seqData;
+      teamNumberStr = `T-${String(seq).padStart(3, "0")}`;
+      tableNumberVal = seq;
+    }
+  }
+
+  // 4. Update the team
+  const updatePayload = {
+    status: newStatus,
+    members: memberStates ? JSON.stringify(memberStates) : team.members,
+  };
+
+  if (newStatus !== "Registered") {
+    updatePayload.team_number = teamNumberStr;
+    updatePayload.table_number = tableNumberVal;
+    updatePayload.arrival_time = new Date().toISOString();
+    updatePayload.check_in_volunteer_id = staffCheck.userId;
+  } else {
+    updatePayload.arrival_time = null;
+    updatePayload.check_in_volunteer_id = null;
+  }
+
   const { error: updateErr } = await admin
     .from("teams")
-    .update({
-      status: "Checked-In",
-      team_number: teamNumberStr,
-      table_number: tableNumberVal,
-      arrival_time: new Date().toISOString(),
-      check_in_volunteer_id: staffCheck.userId,
-      members: memberStates ? JSON.stringify(memberStates) : team.members,
-    })
+    .update(updatePayload)
     .eq("id", teamId)
     .eq("hackathon_id", hackathonId);
 
@@ -151,7 +147,7 @@ export async function checkInTeam(teamId, hackathonId, memberStates) {
   revalidatePath("/registration");
   return {
     success: true,
-    status: "Checked-In",
+    status: newStatus,
     team_number: teamNumberStr,
     table_number: tableNumberVal,
   };
@@ -168,6 +164,16 @@ export async function undoCheckIn(teamId, hackathonId) {
 
   const admin = createAdminClient();
 
+  // Reset member statuses to Pending
+  const { data: team } = await admin.from("teams").select("members").eq("id", teamId).single();
+  let updatedMembers = null;
+  if (team && team.members) {
+    try {
+      const parsed = JSON.parse(team.members);
+      updatedMembers = JSON.stringify(parsed.map(m => ({ ...m, status: 'Pending', food_issued: false, food_issued_at: null, food_issued_by: null })));
+    } catch (e) {}
+  }
+
   const { error } = await admin
     .from("teams")
     .update({
@@ -176,6 +182,7 @@ export async function undoCheckIn(teamId, hackathonId) {
       table_number: null,
       arrival_time: null,
       check_in_volunteer_id: null,
+      members: updatedMembers || team?.members,
     })
     .eq("id", teamId)
     .eq("hackathon_id", hackathonId);
