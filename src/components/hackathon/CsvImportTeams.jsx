@@ -23,9 +23,10 @@ export default function CsvImportTeams({ hackathonId }) {
       skipEmptyLines: true,
       complete: (results) => {
         const rows = results.data.map((r) => {
+          const normalize = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
           const getVal = (keyStr) => {
-            const key = Object.keys(r).find(k => k.toLowerCase().replace(/ /g, '') === keyStr.toLowerCase().replace(/ /g, ''));
-            return r[key]?.trim();
+            const key = Object.keys(r).find(k => normalize(k) === normalize(keyStr));
+            return r[key] !== undefined ? String(r[key]).trim() : undefined;
           };
           
           const teamCode = getVal("teamid") || getVal("teamcode") || "";
@@ -33,10 +34,10 @@ export default function CsvImportTeams({ hackathonId }) {
           const leaderEmail = getVal("email") || getVal("leaderemail") || "";
           const leaderPhone = getVal("phone") || getVal("leaderphone") || "";
           
-          let foodRaw = getVal("food");
+          let foodRaw = getVal("food") || getVal("foodrequired");
           const foodPurchased = foodRaw?.toLowerCase() === "yes" || foodRaw?.toLowerCase() === "included";
           
-          let paymentRaw = getVal("payment") || getVal("paymentstatus");
+          let paymentRaw = getVal("payment") || getVal("paymentstatus") || getVal("foodpaymentstatus");
           let foodPaymentStatus = "Unpaid";
           if (paymentRaw?.toLowerCase() === "paid") foodPaymentStatus = "Paid";
           if (paymentRaw?.toLowerCase() === "pending") foodPaymentStatus = "Pending";
@@ -54,12 +55,21 @@ export default function CsvImportTeams({ hackathonId }) {
             } catch (e) {
               parsedMembers = rawMembers.split(",").map(m => ({ name: m.trim(), status: 'Pending' }));
             }
+          } else {
+            // Dynamically find member columns like member_1_name, member2, etc.
+            const memberKeys = Object.keys(r).filter(k => normalize(k).startsWith('member'));
+            memberKeys.forEach(k => {
+              const mName = String(r[k] || "").trim();
+              if (mName) {
+                parsedMembers.push({ name: mName, status: 'Pending' });
+              }
+            });
           }
           
           const foodQuantity = parseInt(getVal("foodquantity"), 10) || (parsedMembers.length > 0 ? parsedMembers.length : 1);
 
           return {
-            name: getVal("name") || "",
+            name: getVal("name") || getVal("teamname") || "",
             members: JSON.stringify(parsedMembers),
             teamCode,
             leaderName,
