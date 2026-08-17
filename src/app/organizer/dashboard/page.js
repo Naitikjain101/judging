@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import OrganizerTopbar from "@/components/OrganizerTopbar";
 import TerminalPath from "@/components/TerminalPath";
 import HackathonList from "@/components/organizer/HackathonList";
-import { createHackathon } from "../hackathons/actions";
+import { createHackathon, deleteHackathon } from "../hackathons/actions";
 
 export default async function OrganizerDashboard() {
   try {
@@ -45,7 +45,7 @@ export default async function OrganizerDashboard() {
             Dashboard
           </h1>
 
-          <HackathonList initialHackathons={hackathons || []} createAction={createHackathon} />
+          <HackathonList initialHackathons={hackathons || []} createAction={createHackathon} deleteAction={deleteHackathon} />
         </div>
       </div>
     );

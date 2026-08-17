@@ -782,3 +782,23 @@ export async function setRoundVisibility(hackathonId, roundId, isPublic) {
     return { error: err.message || "An unexpected error occurred." };
   }
 }
+
+export async function deleteHackathon(hackathonId) {
+  try {
+    const supabase = await createClient();
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData?.user) return { error: "Unauthorized" };
+
+    const { data: hackathon } = await supabase.from("hackathons").select("created_by").eq("id", hackathonId).single();
+    if (hackathon?.created_by !== userData.user.id) return { error: "Forbidden" };
+
+    const { error } = await supabase.from("hackathons").delete().eq("id", hackathonId);
+    if (error) return { error: error.message };
+
+    revalidatePath(`/organizer/dashboard`);
+    return { error: null };
+  } catch (err) {
+    console.error("Error in deleteHackathon:", err);
+    return { error: err.message || "An unexpected error occurred." };
+  }
+}

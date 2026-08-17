@@ -6,7 +6,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Search, Plus, Calendar, Activity, CheckCircle, ChevronRight } from "lucide-react";
 import SubmitButton from "@/components/SubmitButton";
 
-export default function HackathonList({ initialHackathons, createAction }) {
+import { Trash2 } from "lucide-react";
+
+export default function HackathonList({ initialHackathons, createAction, deleteAction }) {
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
 
@@ -100,7 +102,23 @@ export default function HackathonList({ initialHackathons, createAction }) {
                   </h2>
                   {h.description && <p className="muted" style={{ fontSize: '0.875rem' }}>{h.description}</p>}
                 </div>
-                <ChevronRight size={20} className="muted" />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <button 
+                    className="btn btn-secondary btn-sm" 
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (confirm(`Are you sure you want to completely delete "${h.name}" and all of its data? This cannot be undone.`)) {
+                        await deleteAction(h.id);
+                      }
+                    }}
+                    style={{ padding: '6px', color: 'var(--text-error)' }}
+                    title="Delete Hackathon"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                  <ChevronRight size={20} className="muted" />
+                </div>
               </Link>
             </motion.div>
           ))}
