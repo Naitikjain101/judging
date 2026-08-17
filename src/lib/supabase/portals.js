@@ -70,7 +70,7 @@ export function isPublicPath(pathname) {
     pathname === "/" ||
     pathname.startsWith("/organizer/login") ||
     pathname.startsWith("/organizer/signup") ||
-    pathname.startsWith("/organizer/auth") ||
+    pathname.startsWith("/auth") ||
     pathname.startsWith("/judge/login") ||
     pathname.startsWith("/staff/login") ||
     pathname.startsWith("/public")
