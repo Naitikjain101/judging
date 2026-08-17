@@ -5,13 +5,22 @@
 ALTER TABLE public.rounds ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT false;
 
 -- Backup old passwords just in case, then drop the column
-ALTER TABLE public.judges ADD COLUMN IF NOT EXISTS password_hint TEXT;
-UPDATE public.judges SET password_hint = 'Reset required' WHERE password IS NOT NULL;
-ALTER TABLE public.judges DROP COLUMN IF EXISTS password;
+DO $$
+BEGIN
+    -- For judges
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='judges' AND column_name='password') THEN
+        ALTER TABLE public.judges ADD COLUMN IF NOT EXISTS password_hint TEXT;
+        EXECUTE 'UPDATE public.judges SET password_hint = ''Reset required'' WHERE password IS NOT NULL';
+        ALTER TABLE public.judges DROP COLUMN password;
+    END IF;
 
-ALTER TABLE public.staff ADD COLUMN IF NOT EXISTS password_hint TEXT;
-UPDATE public.staff SET password_hint = 'Reset required' WHERE password IS NOT NULL;
-ALTER TABLE public.staff DROP COLUMN IF EXISTS password;
+    -- For staff
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='staff' AND column_name='password') THEN
+        ALTER TABLE public.staff ADD COLUMN IF NOT EXISTS password_hint TEXT;
+        EXECUTE 'UPDATE public.staff SET password_hint = ''Reset required'' WHERE password IS NOT NULL';
+        ALTER TABLE public.staff DROP COLUMN password;
+    END IF;
+END $$;
 
 -- ==============================================================================
 -- 2. ADD INTEGRITY CONSTRAINTS
