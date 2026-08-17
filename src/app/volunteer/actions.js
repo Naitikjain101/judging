@@ -86,6 +86,27 @@ export async function collectPayment(teamId, hackathonId, amount) {
 
   if (updateErr) return { error: updateErr.message };
 
+  // Insert into food_purchases table for detailed analytics
+  const { error: purchaseErr } = await admin
+    .from("food_purchases")
+    .insert({
+      hackathon_id: hackathonId,
+      team_id: teamId,
+      amount: amount,
+      payment_method: "Food Desk",
+      payment_status: "PAID",
+      payment_source: "FOOD_DESK",
+      volunteer_id: volCheck.userId,
+      created_at: new Date().toISOString()
+    });
+
+  if (purchaseErr) {
+    console.error("Failed to insert food_purchases record:", purchaseErr);
+    // Don't fail the whole request since team was updated, but we could log it
+  }
+
+  if (updateErr) return { error: updateErr.message };
+
   revalidatePath("/volunteer");
   return { success: true };
 }

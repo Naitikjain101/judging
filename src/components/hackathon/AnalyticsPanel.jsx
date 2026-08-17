@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Users, Ticket, CheckCircle, PieChart, Utensils, IndianRupee, ArrowLeft } from "lucide-react";
 
-export default function AnalyticsPanel({ teams }) {
+export default function AnalyticsPanel({ teams, purchases = [] }) {
   const [showDetails, setShowDetails] = useState(false);
 
   let totalMembers = 0;
@@ -16,6 +16,14 @@ export default function AnalyticsPanel({ teams }) {
   let prepaidCount = 0;
   let foodDeskCount = 0;
 
+  const purchasesByTeam = {};
+  purchases.forEach(p => {
+    if (!purchasesByTeam[p.team_id]) {
+      purchasesByTeam[p.team_id] = [];
+    }
+    purchasesByTeam[p.team_id].push(p);
+  });
+
   const teamsWithStats = teams.map(t => {
     let members = [];
     try { members = JSON.parse(t.members || "[]"); } catch(e) {}
@@ -28,15 +36,29 @@ export default function AnalyticsPanel({ teams }) {
     const isPaid = t.food_payment_status === "Paid";
     let teamIssued = 0;
     
-    if (isPaid) {
-      if (t.food_payment_source === "FOOD_DESK") {
-         foodDeskRevenue += Number(t.food_payment_amount || 0);
-         foodDeskCount++;
-      } else {
-         prepaidRevenue += Number(t.food_payment_amount || 0);
-         prepaidCount++;
+    let tPrepaidAmt = 0;
+    let tFoodDeskAmt = 0;
+    let tPrepaidCount = 0;
+    let tFoodDeskCount = 0;
+
+    const teamPurchases = purchasesByTeam[t.id] || [];
+    teamPurchases.forEach(p => {
+      if (p.payment_source === "PREPAID") {
+        tPrepaidAmt += Number(p.amount || 0);
+        tPrepaidCount++;
+      } else if (p.payment_source === "FOOD_DESK") {
+        tFoodDeskAmt += Number(p.amount || 0);
+        tFoodDeskCount++;
       }
-      
+    });
+
+    if (tPrepaidCount > 0) prepaidCount++;
+    if (tFoodDeskCount > 0) foodDeskCount++;
+    
+    prepaidRevenue += tPrepaidAmt;
+    foodDeskRevenue += tFoodDeskAmt;
+    
+    if (isPaid) {
       presentMembers.forEach(m => {
         eligibleMembers++;
         if (m.food_issued) {
@@ -50,7 +72,11 @@ export default function AnalyticsPanel({ teams }) {
       ...t,
       memberCount: members.length,
       presentCount: presentMembers.length,
-      teamIssued
+      teamIssued,
+      tPrepaidAmt,
+      tFoodDeskAmt,
+      isPrepaid: tPrepaidCount > 0,
+      isFoodDesk: tFoodDeskCount > 0
     };
   });
 
@@ -98,6 +124,26 @@ export default function AnalyticsPanel({ teams }) {
               <tbody>
                 {teamsWithStats.map(t => {
                   const isPaid = t.food_payment_status === "Paid";
+                  
+                  // Compute display status based on the new logic
+                  let paymentType = "-";
+                  let amountDisplay = "-";
+                  
+                  if (t.isPrepaid && t.isFoodDesk) {
+                    paymentType = "Mixed";
+                    amountDisplay = `₹${t.tPrepaidAmt + t.tFoodDeskAmt}`;
+                  } else if (t.isPrepaid) {
+                    paymentType = "PREPAID";
+                    amountDisplay = `₹${t.tPrepaidAmt}`;
+                  } else if (t.isFoodDesk) {
+                    paymentType = "FOOD DESK";
+                    amountDisplay = `₹${t.tFoodDeskAmt}`;
+                  } else if (isPaid) {
+                     // Fallback for migrated or not-yet-synced records
+                    paymentType = (t.food_payment_source === "FOOD_DESK") ? "FOOD DESK" : "PREPAID";
+                    amountDisplay = t.food_payment_amount > 0 ? `₹${t.food_payment_amount}` : "-";
+                  }
+
                   return (
                     <tr key={t.id}>
                       <td>
@@ -112,12 +158,8 @@ export default function AnalyticsPanel({ teams }) {
                           <span className="badge badge-warning">Unpaid</span>
                         )}
                       </td>
-                      <td>
-                        {isPaid ? (t.food_payment_source === "FOOD_DESK" ? "Food Desk" : "Prepaid") : "-"}
-                      </td>
-                      <td className="mono">
-                        {isPaid && t.food_payment_amount > 0 ? `₹${t.food_payment_amount}` : "-"}
-                      </td>
+                      <td>{isPaid ? paymentType : "-"}</td>
+                      <td className="mono">{isPaid ? amountDisplay : "-"}</td>
                       <td>
                         {isPaid ? `${t.teamIssued} / ${t.presentCount}` : "-"}
                       </td>

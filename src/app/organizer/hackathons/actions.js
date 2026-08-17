@@ -306,7 +306,7 @@ export async function addJudge(hackathonId, formData) {
   }
 
   revalidatePath(`/organizer/hackathons/${hackathonId}`);
-  return { error: null };
+  return { error: null, credentials: { judgeCode, password } };
   } catch (err) {
     if (err?.message === 'NEXT_REDIRECT' || err?.message === 'NEXT_NOT_FOUND' || (err?.digest && (err.digest.startsWith('NEXT_REDIRECT') || err.digest.startsWith('NEXT_NOT_FOUND')))) throw err;
     console.error("Error in addJudge:", err);
@@ -411,6 +411,37 @@ export async function deleteJudge(hackathonId, judgeId, authUserId) {
   } catch (err) {
     if (err?.message === 'NEXT_REDIRECT' || err?.message === 'NEXT_NOT_FOUND' || (err?.digest && (err.digest.startsWith('NEXT_REDIRECT') || err.digest.startsWith('NEXT_NOT_FOUND')))) throw err;
     console.error("Error in deleteJudge:", err);
+    return { error: err.message || "An unexpected error occurred." };
+  }
+}
+
+export async function resetJudgePassword(hackathonId, judgeId, authUserId) {
+  try {
+    const supabase = await createClient();
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData?.user) return { error: "Unauthorized" };
+    
+    const { data: hackathon } = await supabase.from("hackathons").select("created_by").eq("id", hackathonId).single();
+    if (hackathon?.created_by !== userData.user.id) return { error: "Forbidden" };
+
+    if (!authUserId) return { error: "Judge does not have an auth user ID." };
+
+    const newPassword = Math.random().toString(36).substring(2, 10);
+    
+    const admin = createAdminClient();
+    const { error: authError } = await admin.auth.admin.updateUserById(authUserId, {
+      password: newPassword
+    });
+
+    if (authError) return { error: authError.message };
+
+    // Update password hint to "Reset successful" to remove the warning badge
+    await supabase.from("judges").update({ password_hint: 'Reset successful' }).eq("id", judgeId);
+
+    revalidatePath(`/organizer/hackathons/${hackathonId}`);
+    return { error: null, newPassword };
+  } catch (err) {
+    console.error("Error in resetJudgePassword:", err);
     return { error: err.message || "An unexpected error occurred." };
   }
 }
@@ -760,17 +791,45 @@ export async function deleteStaff(hackathonId, staffId) {
   }
 }
 
+export async function resetStaffPassword(hackathonId, staffId, authUserId) {
+  try {
+    const supabase = await createClient();
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData?.user) return { error: "Unauthorized" };
+    
+    const { data: hackathon } = await supabase.from("hackathons").select("created_by").eq("id", hackathonId).single();
+    if (hackathon?.created_by !== userData.user.id) return { error: "Forbidden" };
+
+    if (!authUserId) return { error: "Staff does not have an auth user ID." };
+
+    const newPassword = Math.random().toString(36).substring(2, 10);
+    
+    const admin = createAdminClient();
+    const { error: authError } = await admin.auth.admin.updateUserById(authUserId, {
+      password: newPassword
+    });
+
+    if (authError) return { error: authError.message };
+
+    // Update password hint to "Reset successful" to remove the warning badge
+    await supabase.from("staff").update({ password_hint: 'Reset successful' }).eq("id", staffId);
+
+    revalidatePath(`/organizer/hackathons/${hackathonId}`);
+    return { error: null, newPassword };
+  } catch (err) {
+    console.error("Error in resetStaffPassword:", err);
+    return { error: err.message || "An unexpected error occurred." };
+  }
+}
+
 export async function saveBulkAssignments(hackathonId, roundId, assignments) {
   const supabase = await createClient();
   const { data: userData } = await supabase.auth.getUser();
   if (!userData?.user) return { error: "Not logged in" };
 
-  // Use admin client for the RPC call
-  const admin = createAdminClient();
-  
-  // The RPC requires assignments to be a JSON array of {judge_id, team_id}
-  // The RPC itself will do the hackathon owner validation and atomic update
-  const { error } = await admin.rpc('bulk_assign_judges', {
+  // Use standard authenticated client for the RPC call
+  // The RPC itself will do the hackathon owner validation using auth.uid() and atomic update
+  const { error } = await supabase.rpc('bulk_assign_judges', {
     p_round_id: roundId,
     p_assignments: assignments.map(a => ({ judge_id: a.judge_id, team_id: a.team_id }))
   });

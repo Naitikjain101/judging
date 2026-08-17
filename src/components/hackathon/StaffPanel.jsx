@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { addStaff, deleteStaff } from "@/app/organizer/hackathons/actions";
+import { addStaff, deleteStaff, resetStaffPassword } from "@/app/organizer/hackathons/actions";
 import SubmitButton from "@/components/SubmitButton";
 import { Copy, Check, ShieldAlert, Key } from "lucide-react";
 
@@ -12,10 +12,30 @@ export default function StaffPanel({ hackathonId, staff }) {
   const [copiedId, setCopiedId] = useState(null);
   const [newCredentials, setNewCredentials] = useState(null);
 
+  const [isResetting, setIsResetting] = useState(false);
+
   const handleCopy = (text, id) => {
     navigator.clipboard.writeText(text);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleResetPassword = async (staffMember) => {
+    if (!confirm(`Are you sure you want to reset the password for ${staffMember.name}?`)) return;
+    setIsResetting(true);
+    const res = await resetStaffPassword(hackathonId, staffMember.id, staffMember.auth_user_id);
+    setIsResetting(false);
+    
+    if (res?.error) {
+      alert(res.error);
+    } else {
+      setNewCredentials({
+        staffCode: staffMember.staff_code,
+        password: res.newPassword,
+        isReset: true
+      });
+      window.scrollTo(0, 0);
+    }
   };
 
   async function handleAdd(e) {
@@ -62,7 +82,7 @@ export default function StaffPanel({ hackathonId, staff }) {
       {newCredentials && (
         <div style={{ marginBottom: 16, padding: 16, background: 'var(--success-soft)', border: '1px solid var(--success)', borderRadius: 8 }}>
           <h4 style={{ color: 'var(--success)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Check size={18} /> Staff Created Successfully
+            <Check size={18} /> {newCredentials.isReset ? "Password Reset Successfully" : "Staff Created Successfully"}
           </h4>
           <div style={{ display: 'grid', gap: 8, marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -119,17 +139,27 @@ export default function StaffPanel({ hackathonId, staff }) {
                       </code>
                     </td>
                     <td style={{ textAlign: "right" }}>
-                      <button 
-                        className="btn btn-secondary" 
-                        style={{ padding: "4px 8px", fontSize: 12 }}
-                        onClick={async () => {
-                          if (!confirm(`Remove ${s.name} from staff?`)) return;
-                          await deleteStaff(hackathonId, s.id);
-                          router.refresh();
-                        }}
-                      >
-                        Remove
-                      </button>
+                      <div style={{ display: 'flex', gap: 6, justifyContent: "flex-end" }}>
+                        <button 
+                          className="btn btn-secondary" 
+                          style={{ padding: "4px 8px", fontSize: 12 }}
+                          onClick={() => handleResetPassword(s)}
+                          disabled={isResetting}
+                        >
+                          Reset Password
+                        </button>
+                        <button 
+                          className="btn btn-danger" 
+                          style={{ padding: "4px 8px", fontSize: 12 }}
+                          onClick={async () => {
+                            if (!confirm(`Remove ${s.name} from staff?`)) return;
+                            await deleteStaff(hackathonId, s.id);
+                            router.refresh();
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

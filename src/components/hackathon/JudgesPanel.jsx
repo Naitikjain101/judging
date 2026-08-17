@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { addJudge, deleteJudge } from "@/app/organizer/hackathons/actions";
+import { addJudge, deleteJudge, resetJudgePassword } from "@/app/organizer/hackathons/actions";
 import SubmitButton from "@/components/SubmitButton";
 import CsvImportJudges from "./CsvImportJudges";
 import { Copy, Check } from "lucide-react";
@@ -22,10 +22,31 @@ export default function JudgesPanel({ hackathonId, judges }) {
   const [copiedId, setCopiedId] = useState(null);
   const [newlyCreated, setNewlyCreated] = useState(null);
 
+  const [isResetting, setIsResetting] = useState(false);
+
   const handleCopy = (text, id) => {
     navigator.clipboard.writeText(text);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleResetPassword = async (judge) => {
+    if (!confirm(`Are you sure you want to reset the password for ${judge.name}?`)) return;
+    setIsResetting(true);
+    const res = await resetJudgePassword(hackathonId, judge.id, judge.auth_user_id);
+    setIsResetting(false);
+    
+    if (res?.error) {
+      alert(res.error);
+    } else {
+      setNewlyCreated({
+        name: judge.name,
+        code: judge.judge_code,
+        password: res.newPassword,
+        isReset: true
+      });
+      window.scrollTo(0, 0);
+    }
   };
 
   async function handleAdd(e) {
@@ -88,7 +109,7 @@ export default function JudgesPanel({ hackathonId, judges }) {
             {newlyCreated && (
               <div style={{ padding: 16, background: 'var(--success-soft)', border: '1px solid var(--success)', borderRadius: 8 }}>
                 <h4 style={{ color: 'var(--success)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Check size={18} /> Judge Created Successfully
+                  <Check size={18} /> {newlyCreated.isReset ? "Password Reset Successfully" : "Judge Created Successfully"}
                 </h4>
                 <div style={{ display: 'grid', gap: 8, marginBottom: 16 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -151,7 +172,14 @@ export default function JudgesPanel({ hackathonId, judges }) {
                 </button>
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                Password: <span className="muted" style={{ fontStyle: 'italic' }}>Hidden for security</span>
+                <button 
+                  className="btn btn-secondary btn-sm" 
+                  style={{ fontSize: 11, padding: "2px 8px" }}
+                  onClick={() => handleResetPassword(j)}
+                  disabled={isResetting}
+                >
+                  Reset Password
+                </button>
               </span>
             </div>
           </div>
@@ -159,6 +187,7 @@ export default function JudgesPanel({ hackathonId, judges }) {
             className="btn btn-danger btn-sm"
             style={{ marginLeft: 16 }}
             onClick={async () => {
+              if (!confirm(`Remove ${j.name} from judges?`)) return;
               await deleteJudge(hackathonId, j.id, j.auth_user_id);
               router.refresh();
             }}
