@@ -1,13 +1,13 @@
-import { createClient } from "@/lib/supabase/server";
+import { createPortalClient, createAdminClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import ProfileMenu from "@/components/ProfileMenu";
 
 export default async function VolunteerLayout({ children }) {
-  const supabase = await createClient();
+  const supabase = await createPortalClient("volunteer");
   const { data: userData } = await supabase.auth.getUser();
 
-  if (!userData?.user) redirect("/organizer/login");
+  if (!userData?.user) redirect("/staff/login");
 
   return (
     <div className="shell">
@@ -18,7 +18,7 @@ export default async function VolunteerLayout({ children }) {
             Nexus<span style={{ color: 'var(--text-muted)' }}>Volunteer</span>
           </Link>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <ProfileMenu label={userData.user.email} loginPath="/" />
+            <ProfileMenu label={userData.user.user_metadata?.staff_code || userData.user.email} loginPath="/staff/login" portal="volunteer" />
           </div>
         </div>
       </div>

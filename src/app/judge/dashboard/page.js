@@ -1,11 +1,11 @@
-import { createClient } from "@/lib/supabase/server";
+import { createPortalClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import JudgeTopbar from "@/components/JudgeTopbar";
 import TerminalPath from "@/components/TerminalPath";
 import JudgeScoringApp from "@/components/judge/JudgeScoringApp";
 
 export default async function JudgeDashboardPage() {
-  const supabase = await createClient();
+  const supabase = await createPortalClient("judge");
   const { data: userData } = await supabase.auth.getUser();
   if (!userData?.user) redirect("/judge/login");
 
@@ -41,7 +41,7 @@ export default async function JudgeDashboardPage() {
     // Extract all unique team IDs assigned to this judge
     const allAssignedTeamIds = [...new Set(assignmentRows.map(a => a.team_id))];
 
-    // Batch fetch ALL necessary data in 3 parallel queries instead of 3 queries PER round
+    // Batch fetch ALL necessary data in 3 parallel queries
     const [{ data: allTeams }, { data: allCriteria }, { data: allSubmissions }] = await Promise.all([
       supabase.from("teams").select("id, name, members, team_code, hackathon_id").in("id", allAssignedTeamIds),
       supabase.from("criteria").select("id, name, max_score, round_id").in("round_id", roundIds).order("order_index"),
@@ -52,7 +52,7 @@ export default async function JudgeDashboardPage() {
         .eq("judge_id", judge.id),
     ]);
 
-    // Group the global data by round
+    // Group data by round
     roundsData = (rounds || []).map((round) => {
       const teamIdsForRound = assignmentRows.filter((a) => a.round_id === round.id).map((a) => a.team_id);
       

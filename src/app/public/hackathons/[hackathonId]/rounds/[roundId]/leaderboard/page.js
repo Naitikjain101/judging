@@ -1,15 +1,30 @@
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import LiveLeaderboard from "@/components/public/LiveLeaderboard";
 
 export default async function PublicLeaderboardPage({ params }) {
   const { hackathonId, roundId } = await params;
-  const supabase = await createClient();
+  
+  // Use admin client because public visitors are not authenticated and RLS
+  // restricts visibility to organizers/judges. We manually enforce visibility
+  // by checking the is_public flag.
+  const supabase = createAdminClient();
 
   const { data: round } = await supabase.from("rounds").select("*").eq("id", roundId).single();
   if (!round) notFound();
 
   const { data: hackathon } = await supabase.from("hackathons").select("id, name").eq("id", hackathonId).single();
+
+  if (!round.is_public) {
+    return (
+      <div className="shell" style={{ minHeight: '100vh', background: 'var(--bg-default)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ textAlign: 'center' }}>
+          <h1 className="title" style={{ fontSize: '2rem', marginBottom: '1rem' }}>Leaderboard is Private</h1>
+          <p className="muted">The organizer has not made this leaderboard public yet.</p>
+        </div>
+      </div>
+    );
+  }
 
   const [{ data: roundTeamRows }, { data: allTeams }, { data: criteria }, { data: submissions }] =
     await Promise.all([

@@ -1,6 +1,6 @@
 "use server";
 
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createPortalClient, createAdminClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 
 export async function signUpOrganizer(prevState, formData) {
@@ -9,7 +9,7 @@ export async function signUpOrganizer(prevState, formData) {
     const password = formData.get("password");
     const fullName = formData.get("fullName");
 
-    const supabase = await createClient();
+    const supabase = await createPortalClient("organizer");
 
     const { data, error } = await supabase.auth.signUp({ email, password });
     if (error) {
@@ -26,8 +26,9 @@ export async function signUpOrganizer(prevState, formData) {
       }
     }
   } catch (err) {
+    if (err?.digest?.startsWith("NEXT_REDIRECT")) throw err;
     console.error("signUpOrganizer error:", err);
-    return { error: err.message || "Failed to initialize database client. Please ensure your Vercel Environment Variables are set and you have Redeployed." };
+    return { error: err.message || "Failed to sign up." };
   }
 
   redirect("/organizer/dashboard");
@@ -38,16 +39,23 @@ export async function logInOrganizer(prevState, formData) {
     const email = formData.get("email");
     const password = formData.get("password");
 
-    const supabase = await createClient();
+    const supabase = await createPortalClient("organizer");
     const { error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error) {
       return { error: error.message };
     }
   } catch (err) {
+    if (err?.digest?.startsWith("NEXT_REDIRECT")) throw err;
     console.error("logInOrganizer error:", err);
-    return { error: err.message || "Database connection error. Are the Supabase URL and ANON_KEY set in Vercel?" };
+    return { error: err.message || "Database connection error." };
   }
 
   redirect("/organizer/dashboard");
+}
+
+export async function logOutOrganizer() {
+  const supabase = await createPortalClient("organizer");
+  await supabase.auth.signOut();
+  redirect("/organizer/login");
 }

@@ -1,24 +1,17 @@
-import { createClient } from "@/lib/supabase/server";
+import { createPortalClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import GoogleSignInButton from "@/components/GoogleSignInButton";
 import TerminalPath from "@/components/TerminalPath";
 import OrganizerLoginForm from "@/components/organizer/OrganizerLoginForm";
 
-const JUDGE_AUTH_DOMAIN = process.env.JUDGE_AUTH_DOMAIN || "judge.hu.local";
-
 export default async function OrganizerLoginPage({ searchParams }) {
   try {
     const params = await searchParams;
-    const supabase = await createClient();
+    const supabase = await createPortalClient("organizer");
     const { data: userData } = await supabase.auth.getUser();
 
     if (userData?.user) {
-      const email = userData.user.email || "";
-      if (email.endsWith(`@${JUDGE_AUTH_DOMAIN}`)) {
-        redirect("/judge/dashboard");
-      } else {
-        redirect("/organizer/dashboard");
-      }
+      redirect("/organizer/dashboard");
     }
 
     return (
@@ -45,13 +38,11 @@ export default async function OrganizerLoginPage({ searchParams }) {
       </div>
     );
   } catch (err) {
-    // Check if it's a redirect error and let it bubble up
-    if (err.message === "NEXT_REDIRECT") throw err;
+    if (err?.digest?.startsWith("NEXT_REDIRECT")) throw err;
     return (
       <div style={{ padding: 40, color: 'red' }}>
-        <h2>Server Component Error in Login Page:</h2>
+        <h2>Login Page Error:</h2>
         <pre>{err.message}</pre>
-        <pre>{err.stack}</pre>
       </div>
     );
   }

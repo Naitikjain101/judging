@@ -1,8 +1,20 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
+import { getPortalFromPath, getPortalPrefix, PORTALS, isPublicPath } from "./portals";
 
-const JUDGE_AUTH_DOMAIN = process.env.JUDGE_AUTH_DOMAIN || "judge.hu.local";
-
+/**
+ * Portal-aware session middleware.
+ *
+ * For each incoming request the middleware:
+ *   1. Detects the portal from the URL path
+ *   2. Reads only that portal's cookies (via prefix)
+ *   3. Refreshes the auth token (writing back to portal cookies)
+ *   4. Validates the user's role matches the portal
+ *   5. Redirects to the portal's login if validation fails
+ *
+ * Because each portal uses its own cookie namespace, logging in / out
+ * in one portal never affects another — even across browser tabs.
+ */
 export async function updateSession(request) {
   let response = NextResponse.next({ request });
 
@@ -11,98 +23,97 @@ export async function updateSession(request) {
     const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseKey) {
-      console.error("Missing Supabase environment variables! Please check your Vercel project settings.");
-      // If environment variables are missing, we cannot authenticate, but we shouldn't crash the app.
-      // We will just let the request through (though they won't be logged in).
+      console.error("Missing Supabase environment variables!");
       return response;
     }
 
-    const supabase = createServerClient(
-      supabaseUrl,
-      supabaseKey,
-      {
-        cookies: {
-          getAll() {
-            return request.cookies.getAll();
-          },
-          setAll(cookiesToSet) {
-            cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-            response = NextResponse.next({ request });
-            cookiesToSet.forEach(({ name, value, options }) =>
-              response.cookies.set(name, value, options)
-            );
-          },
-        },
-      }
-    );
+    const pathname = request.nextUrl.pathname;
 
-    const { data: { user } } = await supabase.auth.getUser();
-    const url = request.nextUrl.clone();
-    
-    if (user) {
-      const isJudge = user.email?.endsWith(`@${JUDGE_AUTH_DOMAIN}`);
-      
-      // Protect organizer routes
-      if (url.pathname.startsWith('/organizer') && !url.pathname.startsWith('/organizer/login') && !url.pathname.startsWith('/organizer/signup') && !url.pathname.startsWith('/organizer/auth')) {
-        if (isJudge) {
-          url.pathname = '/';
-          return NextResponse.redirect(url);
-        }
+    // Public / auth pages — no session check needed
+    if (isPublicPath(pathname)) {
+      return response;
+    }
+
+    const portal = getPortalFromPath(pathname);
+    const prefix = getPortalPrefix(portal);
+
+    // Create a Supabase client scoped to this portal's cookies
+    const supabase = createServerClient(supabaseUrl, supabaseKey, {
+      cookies: {
+        getAll() {
+          const all = request.cookies.getAll();
+          if (!prefix) return all;
+          return all
+            .filter((c) => c.name.startsWith(prefix))
+            .map((c) => ({ ...c, name: c.name.slice(prefix.length) }));
+        },
+        setAll(cookiesToSet) {
+          // Write prefixed cookies into both the request (for downstream)
+          // and the response (for the browser).
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(prefix + name, value)
+          );
+          response = NextResponse.next({ request });
+          cookiesToSet.forEach(({ name, value, options }) =>
+            response.cookies.set(prefix + name, value, options)
+          );
+        },
+      },
+    });
+
+    // Refresh the token — this is the primary job of the middleware
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    // ── No valid session → redirect to portal login ──
+    if (!user) {
+      const loginUrl = request.nextUrl.clone();
+      loginUrl.pathname = PORTALS[portal]?.loginPath || "/";
+      return NextResponse.redirect(loginUrl);
+    }
+
+    // ── Portal-level role enforcement ──
+    const role = user.user_metadata?.role || "";
+    const email = user.email || "";
+
+    if (portal === "organizer") {
+      // Real human users only — reject synthetic judge / staff emails
+      if (
+        email.endsWith("@judge.hu.local") ||
+        email.endsWith("@staff.hu.local")
+      ) {
+        return redirectTo(request, "/");
       }
-      
-      // Protect judge routes
-      if (url.pathname.startsWith('/judge') && !url.pathname.startsWith('/judge/login')) {
-        if (!isJudge) {
-          url.pathname = '/';
-          return NextResponse.redirect(url);
-        }
-        
-        const dbSession = user.user_metadata?.current_session;
-        const cookieSession = request.cookies.get('judge_session')?.value;
-        
-        if (dbSession && cookieSession && dbSession !== cookieSession) {
-          url.pathname = '/judge/login';
-          url.searchParams.set('error', 'session_invalidated');
-          const redirectRes = NextResponse.redirect(url);
-          redirectRes.cookies.delete('judge_session');
-          return redirectRes;
-        }
+    }
+
+    if (portal === "registration") {
+      if (role !== "Registration Desk") {
+        return redirectTo(request, "/staff/login");
       }
-      
-      // Protect registration desk routes
-      if (url.pathname.startsWith('/registration')) {
-        if (user.user_metadata?.role !== 'Registration Desk') {
-          url.pathname = '/';
-          return NextResponse.redirect(url);
-        }
+    }
+
+    if (portal === "volunteer") {
+      if (role !== "Volunteer") {
+        return redirectTo(request, "/staff/login");
       }
-      
-      // Protect volunteer routes
-      if (url.pathname.startsWith('/volunteer')) {
-        if (user.user_metadata?.role !== 'Volunteer') {
-          url.pathname = '/';
-          return NextResponse.redirect(url);
-        }
-      }
-    } else {
-      // Basic redirect for unauthenticated users
-      if (url.pathname.startsWith('/organizer') && !url.pathname.startsWith('/organizer/login') && !url.pathname.startsWith('/organizer/signup') && !url.pathname.startsWith('/organizer/auth')) {
-        url.pathname = '/organizer/login';
-        return NextResponse.redirect(url);
-      }
-      if (url.pathname.startsWith('/judge') && !url.pathname.startsWith('/judge/login')) {
-        url.pathname = '/judge/login';
-        return NextResponse.redirect(url);
-      }
-      if (url.pathname.startsWith('/registration') || url.pathname.startsWith('/volunteer')) {
-        url.pathname = '/staff/login';
-        return NextResponse.redirect(url);
+    }
+
+    if (portal === "judge") {
+      if (!email.endsWith("@judge.hu.local")) {
+        return redirectTo(request, "/");
       }
     }
 
     return response;
   } catch (error) {
-    console.error("Middleware crash caught:", error);
-    return response; // Allow the request to pass through instead of showing 500 error
+    console.error("Middleware error:", error);
+    return response;
   }
+}
+
+function redirectTo(request, path) {
+  const url = request.nextUrl.clone();
+  url.pathname = path;
+  return NextResponse.redirect(url);
 }

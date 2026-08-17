@@ -3,7 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-export default function ProfileMenu({ label, loginPath }) {
+/**
+ * Profile menu with portal-aware sign-out.
+ * The `portal` prop determines which portal's cookies to clear.
+ * If not provided, it auto-detects from the URL.
+ */
+export default function ProfileMenu({ label, loginPath, portal }) {
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const ref = useRef(null);
@@ -18,11 +23,11 @@ export default function ProfileMenu({ label, loginPath }) {
 
   async function handleLogout() {
     setLoggingOut(true);
-    const supabase = createClient();
+    // Create a browser client scoped to this portal's cookies
+    const supabase = createClient(portal);
     await supabase.auth.signOut();
-    // Hard navigation — forces middleware to re-check auth from scratch,
-    // rather than relying on client router cache to reflect the new state.
-    window.location.href = loginPath;
+    // Hard navigation to force middleware re-check
+    window.location.href = loginPath || "/";
   }
 
   const initial = (label || "?").trim().charAt(0).toUpperCase();

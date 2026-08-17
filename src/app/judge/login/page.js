@@ -1,25 +1,15 @@
-import { createClient } from "@/lib/supabase/server";
+import { createPortalClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import JudgeLoginForm from "@/components/judge/JudgeLoginForm";
 import TerminalPath from "@/components/TerminalPath";
 
-const JUDGE_AUTH_DOMAIN = process.env.JUDGE_AUTH_DOMAIN || "judge.hu.local";
-
 export default async function JudgeLoginPage({ searchParams }) {
   const params = await searchParams;
-  const errorMsg = params?.error === "session_invalidated" ? "Your session was invalidated because you logged in on another device." : null;
-
-  const supabase = await createClient();
-  
-  if (errorMsg) {
-    await supabase.auth.signOut();
-  }
-  
+  const supabase = await createPortalClient("judge");
   const { data: userData } = await supabase.auth.getUser();
 
-  if (userData?.user && !errorMsg) {
-    const email = userData.user.email || "";
-    redirect(email.endsWith(`@${JUDGE_AUTH_DOMAIN}`) ? "/judge/dashboard" : "/organizer/dashboard");
+  if (userData?.user) {
+    redirect("/judge/dashboard");
   }
 
   return (
@@ -30,7 +20,13 @@ export default async function JudgeLoginPage({ searchParams }) {
           Judge login
         </h1>
         
-        {errorMsg && <div className="alert alert-error" style={{ marginBottom: 24 }}>{errorMsg}</div>}
+        {params?.error && (
+          <div className="alert alert-error" style={{ marginBottom: 24 }}>
+            {params.error === "session_invalidated"
+              ? "Your session was invalidated because you logged in on another device."
+              : params.error}
+          </div>
+        )}
 
         <JudgeLoginForm />
 

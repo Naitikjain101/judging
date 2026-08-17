@@ -91,13 +91,13 @@ export default function JudgesPanel({ hackathonId, judges }) {
               {j.designation && <span className="muted" style={{ fontWeight: 400 }}>- {j.designation}</span>}
               <button 
                 type="button"
-                onClick={() => handleCopy(`Judge Name: ${j.name || "Unnamed judge"}\nJudge ID: ${j.judge_code}\nPassword: ${j.password}`, `all-${j.id}`)}
+                onClick={() => handleCopy(`Judge Name: ${j.name || "Unnamed judge"}\nJudge ID: ${j.judge_code}`, `all-${j.id}`)}
                 className="btn btn-secondary btn-sm"
                 style={{ marginLeft: 'auto', display: 'flex', gap: 6, fontSize: 12, padding: "4px 8px", minHeight: "28px" }}
-                title="Copy all credentials"
+                title="Copy Judge ID"
               >
                 {copiedId === `all-${j.id}` ? <Check size={14} className="text-success" /> : <Copy size={14} />}
-                {copiedId === `all-${j.id}` ? "Copied!" : "Copy Details"}
+                {copiedId === `all-${j.id}` ? "Copied!" : "Copy Judge ID"}
               </button>
             </div>
             <div className="mono muted" style={{ fontSize: 13, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
@@ -108,10 +108,7 @@ export default function JudgesPanel({ hackathonId, judges }) {
                 </button>
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                Password: {j.password}
-                <button type="button" onClick={() => handleCopy(j.password, `pass-${j.id}`)} style={{ cursor: "pointer", background: "none", border: "none", color: "inherit", opacity: 0.7 }} title="Copy Password">
-                  {copiedId === `pass-${j.id}` ? <Check size={12} className="text-success" /> : <Copy size={12} />}
-                </button>
+                Password: <span className="muted" style={{ fontStyle: 'italic' }}>Hidden for security</span>
               </span>
             </div>
           </div>

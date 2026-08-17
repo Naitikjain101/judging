@@ -5,9 +5,9 @@ import OrganizerTopbar from "@/components/OrganizerTopbar";
 import TerminalPath from "@/components/TerminalPath";
 import CriteriaPanel from "@/components/round/CriteriaPanel";
 import TeamSelectionPanel from "@/components/round/TeamSelectionPanel";
-import JudgeAssignmentPanel from "@/components/round/JudgeAssignmentPanel";
+import JudgeAssignmentWorkspace from "@/components/round/JudgeAssignmentWorkspace";
 import JudgeProgressPanel from "@/components/round/JudgeProgressPanel";
-import { setRoundStatus } from "@/app/organizer/hackathons/actions";
+import { setRoundStatus, setRoundVisibility } from "@/app/organizer/hackathons/actions";
 
 export default async function RoundDetailPage({ params }) {
   const { hackathonId, roundId } = await params;
@@ -54,7 +54,17 @@ export default async function RoundDetailPage({ params }) {
               ← back to {hackathon?.name}
             </Link>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 12px", background: "var(--bg-elevated)", borderRadius: 100, border: "1px solid var(--border-subtle)" }}>
+              <span className="text-xs muted">Leaderboard:</span>
+              <form action={async () => { "use server"; await setRoundVisibility(hackathonId, roundId, !round.is_public); }}>
+                <button className={`btn btn-sm ${round.is_public ? "btn-accent" : ""}`} style={{ borderRadius: 100, padding: "2px 8px", fontSize: 11 }}>
+                  {round.is_public ? "Public" : "Private"}
+                </button>
+              </form>
+            </div>
+            <div style={{ width: 1, height: 24, background: "var(--border-subtle)" }}></div>
+            <div style={{ display: "flex", gap: 4 }}>
             {["upcoming", "active", "completed"].map((s) => (
               <form key={s} action={async () => { "use server"; await setRoundStatus(hackathonId, roundId, s); }}>
                 <button className={`btn btn-sm ${round.status === s ? "btn-primary" : "btn-secondary"}`}>
@@ -62,6 +72,7 @@ export default async function RoundDetailPage({ params }) {
                 </button>
               </form>
             ))}
+            </div>
             <Link href={`/organizer/hackathons/${hackathonId}/rounds/${roundId}/results`} className="btn btn-secondary btn-sm">
               Results →
             </Link>
@@ -84,8 +95,8 @@ export default async function RoundDetailPage({ params }) {
           previousRoundId={previousRound?.id || null}
         />
 
-        <div className="card">
-          <JudgeAssignmentPanel
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <JudgeAssignmentWorkspace
             hackathonId={hackathonId}
             roundId={roundId}
             judges={judges || []}

@@ -3,28 +3,35 @@
 import { useState, useEffect, useCallback } from "react";
 import { searchTeams, checkInTeam, undoCheckIn } from "@/app/registration/actions";
 import { toast } from "sonner";
-import { Search, CheckCircle, Clock, Undo, QrCode, Coffee, History } from "lucide-react";
+import { Search, CheckCircle, Clock, QrCode, Coffee, History } from "lucide-react";
 import TeamDetailsDrawer from "./TeamDetailsDrawer";
 
-export default function CheckInDashboard({ hackathons }) {
-  const [selectedHackathon, setSelectedHackathon] = useState(hackathons[0]?.id);
+/**
+ * Check-in dashboard — auto-scoped to a single hackathon (the one
+ * the registration desk staff member is assigned to).
+ */
+export default function CheckInDashboard({ hackathon }) {
+  const hackathonId = hackathon.id;
   const [query, setQuery] = useState("");
   const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   const [processingId, setProcessingId] = useState(null);
   const [selectedTeam, setSelectedTeam] = useState(null);
 
   const fetchTeams = useCallback(async () => {
-    if (!selectedHackathon) return;
+    if (!hackathonId) return;
     setLoading(true);
-    const res = await searchTeams(selectedHackathon, query);
+    setError(null);
+    const res = await searchTeams(hackathonId, query);
     if (res.error) {
+      setError(res.error);
       toast.error(res.error);
     } else {
       setTeams(res.teams || []);
     }
     setLoading(false);
-  }, [selectedHackathon, query]);
+  }, [hackathonId, query]);
 
   // Debounced search
   useEffect(() => {
@@ -36,9 +43,8 @@ export default function CheckInDashboard({ hackathons }) {
 
   const handleCheckInFull = async (teamId, members) => {
     setProcessingId(teamId);
-    // Set all members to Present
     const updatedMembers = members.map(m => ({ ...m, status: 'Present' }));
-    const res = await checkInTeam(teamId, selectedHackathon, updatedMembers);
+    const res = await checkInTeam(teamId, hackathonId, updatedMembers);
     setProcessingId(null);
     
     if (res.error) {
@@ -46,8 +52,10 @@ export default function CheckInDashboard({ hackathons }) {
     } else {
       if (res.status === 'Checked-In') {
         toast.success(`Checked in! Team: ${res.team_number}, Table: ${res.table_number}`);
+      } else if (res.status === 'Partially Checked In') {
+        toast.success(res.message || "Partial check-in saved.");
       } else {
-        toast.success("Team partially checked in.");
+        toast.success("Check-in updated.");
       }
       setSelectedTeam(null);
       fetchTeams();
@@ -56,7 +64,7 @@ export default function CheckInDashboard({ hackathons }) {
 
   const handleCheckInPartial = async (teamId, members) => {
     setProcessingId(teamId);
-    const res = await checkInTeam(teamId, selectedHackathon, members);
+    const res = await checkInTeam(teamId, hackathonId, members);
     setProcessingId(null);
     
     if (res.error) {
@@ -65,7 +73,7 @@ export default function CheckInDashboard({ hackathons }) {
       if (res.status === 'Checked-In') {
         toast.success(`Fully Checked in! Team: ${res.team_number}, Table: ${res.table_number}`);
       } else {
-        toast.success("Saved partial check-in.");
+        toast.success(res.message || "Saved partial check-in.");
       }
       setSelectedTeam(null);
       fetchTeams();
@@ -76,7 +84,7 @@ export default function CheckInDashboard({ hackathons }) {
     if (!confirm(`Undo check-in for ${team.name}? This removes their team and table number.`)) return;
     
     setProcessingId(team.id);
-    const res = await undoCheckIn(team.id);
+    const res = await undoCheckIn(team.id, hackathonId);
     setProcessingId(null);
     
     if (res.error) {
@@ -90,6 +98,7 @@ export default function CheckInDashboard({ hackathons }) {
   const stats = {
     total: teams.length,
     checkedIn: teams.filter(t => t.status === "Checked-In").length,
+    partial: teams.filter(t => t.status === "Partially Checked In").length,
     pending: teams.filter(t => t.status === "Registered").length
   };
   
@@ -100,19 +109,9 @@ export default function CheckInDashboard({ hackathons }) {
 
   return (
     <div>
+      {/* Stats Bar */}
       <div className="card" style={{ marginBottom: '2rem', display: 'flex', gap: '2rem', flexWrap: 'wrap', alignItems: 'center' }}>
-        <div className="field" style={{ margin: 0, minWidth: 200 }}>
-          <label className="eyebrow">Active Event</label>
-          <select 
-            className="input" 
-            value={selectedHackathon} 
-            onChange={e => setSelectedHackathon(e.target.value)}
-          >
-            {hackathons.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
-          </select>
-        </div>
-        
-        <div style={{ display: 'flex', gap: '3rem', flex: 1, justifyContent: 'flex-end' }}>
+        <div style={{ display: 'flex', gap: '3rem', flex: 1, justifyContent: 'flex-start' }}>
           <div style={{ textAlign: 'center' }}>
             <div className="score-big">{stats.total}</div>
             <div className="eyebrow">Total Found</div>
@@ -121,6 +120,12 @@ export default function CheckInDashboard({ hackathons }) {
             <div className="score-big" style={{ color: 'var(--success)' }}>{stats.checkedIn}</div>
             <div className="eyebrow">Checked In</div>
           </div>
+          {stats.partial > 0 && (
+            <div style={{ textAlign: 'center' }}>
+              <div className="score-big" style={{ color: 'var(--warn)' }}>{stats.partial}</div>
+              <div className="eyebrow">Partial</div>
+            </div>
+          )}
           <div style={{ textAlign: 'center' }}>
             <div className="score-big" style={{ color: 'var(--warn)' }}>{stats.pending}</div>
             <div className="eyebrow">Pending</div>
@@ -144,10 +149,14 @@ export default function CheckInDashboard({ hackathons }) {
                 autoFocus
               />
             </div>
-            <button className="btn btn-secondary" style={{ borderRadius: 100 }}>
-              <QrCode size={18} /> Scan QR
-            </button>
           </div>
+
+          {/* Error state */}
+          {error && (
+            <div className="alert alert-error" style={{ marginBottom: '1rem' }}>
+              {error}
+            </div>
+          )}
 
           <div className="table-wrapper">
             <table className="data-table">
@@ -163,7 +172,7 @@ export default function CheckInDashboard({ hackathons }) {
               <tbody>
                 {loading && teams.length === 0 ? (
                   <tr><td colSpan={5} className="text-center muted" style={{ padding: '3rem' }}>Searching...</td></tr>
-                ) : teams.length === 0 ? (
+                ) : teams.length === 0 && !error ? (
                   <tr><td colSpan={5} className="text-center muted" style={{ padding: '3rem' }}>No teams found.</td></tr>
                 ) : (
                   teams.map((t) => {
@@ -263,7 +272,7 @@ export default function CheckInDashboard({ hackathons }) {
       {selectedTeam && (
         <TeamDetailsDrawer 
           team={selectedTeam} 
-          hackathon={{ id: selectedHackathon }}
+          hackathon={hackathon}
           onClose={() => setSelectedTeam(null)}
           onCheckInFull={handleCheckInFull}
           onCheckInPartial={handleCheckInPartial}

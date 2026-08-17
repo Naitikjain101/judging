@@ -100,6 +100,12 @@ export default function ResultsView({ hackathonId, roundId, teams, judges, crite
       .sort((a, b) => (b.finalScore ?? -1) - (a.finalScore ?? -1));
   }, [teams, submissions, criteria, judges]);
 
+  const handleRefresh = () => {
+    startTransition(() => {
+      router.refresh();
+    });
+  };
+
   const handleExportCSV = () => {
     if (!leaderboard.length) return;
     

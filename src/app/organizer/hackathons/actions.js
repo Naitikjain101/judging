@@ -274,7 +274,6 @@ export async function addJudge(hackathonId, formData) {
   const { error } = await supabase.from("judges").insert({
     hackathon_id: hackathonId,
     judge_code: judgeCode,
-    password,
     auth_user_id: authUser.user.id,
     name,
     company,
@@ -337,7 +336,6 @@ export async function importJudgesCSV(hackathonId, rows) {
     const { error: dbError } = await supabase.from("judges").insert({
       hackathon_id: hackathonId,
       judge_code: judgeCode,
-      password,
       auth_user_id: authUser.user.id,
       name,
       company,
@@ -697,14 +695,13 @@ export async function addStaff({ hackathonId, name, role }) {
     name,
     role,
     staff_code: staffCode,
-    password,
     auth_user_id: authUser.user.id,
   });
 
   if (error) return { error: error.message };
 
   revalidatePath(`/organizer/hackathons/${hackathonId}`);
-  return { error: null };
+  return { error: null, credentials: { staffCode, password } };
   } catch (err) {
     if (err?.message === 'NEXT_REDIRECT' || err?.message === 'NEXT_NOT_FOUND' || (err?.digest && (err.digest.startsWith('NEXT_REDIRECT') || err.digest.startsWith('NEXT_NOT_FOUND')))) throw err;
     console.error("Error in addStaff:", err);
@@ -739,6 +736,49 @@ export async function deleteStaff(hackathonId, staffId) {
   } catch (err) {
     if (err?.message === 'NEXT_REDIRECT' || err?.message === 'NEXT_NOT_FOUND' || (err?.digest && (err.digest.startsWith('NEXT_REDIRECT') || err.digest.startsWith('NEXT_NOT_FOUND')))) throw err;
     console.error("Error in deleteStaff:", err);
+    return { error: err.message || "An unexpected error occurred." };
+  }
+}
+
+export async function saveBulkAssignments(hackathonId, roundId, assignments) {
+  const supabase = await createClient();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData?.user) return { error: "Not logged in" };
+
+  // Use admin client for the RPC call
+  const admin = createAdminClient();
+  
+  // The RPC requires assignments to be a JSON array of {judge_id, team_id}
+  // The RPC itself will do the hackathon owner validation and atomic update
+  const { error } = await admin.rpc('bulk_assign_judges', {
+    p_round_id: roundId,
+    p_assignments: assignments.map(a => ({ judge_id: a.judge_id, team_id: a.team_id }))
+  });
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  revalidatePath(`/organizer/hackathons/${hackathonId}/rounds/${roundId}`);
+  return { success: true };
+}
+
+export async function setRoundVisibility(hackathonId, roundId, isPublic) {
+  try {
+    const supabase = await createClient();
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData?.user) return { error: "Unauthorized" };
+    
+    const { data: hackathon } = await supabase.from("hackathons").select("created_by").eq("id", hackathonId).single();
+    if (hackathon?.created_by !== userData.user.id) return { error: "Forbidden" };
+
+    const { error } = await supabase.from("rounds").update({ is_public: isPublic }).eq("id", roundId);
+    if (error) return { error: error.message };
+
+    revalidatePath(`/organizer/hackathons/${hackathonId}/rounds/${roundId}`);
+    return { error: null };
+  } catch (err) {
+    console.error("Error in setRoundVisibility:", err);
     return { error: err.message || "An unexpected error occurred." };
   }
 }
