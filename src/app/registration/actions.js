@@ -95,23 +95,7 @@ export async function checkInTeam(teamId, hackathonId, memberStates) {
 
   if (totalMembers > 0) {
     if (checkInRule === "ALL_MEMBERS" && presentMembers.length < totalMembers) {
-      // Save partial state but don't fully check in
-      const { error: updateErr } = await admin
-        .from("teams")
-        .update({
-          members: JSON.stringify(memberStates),
-          status: "Partially Checked In",
-        })
-        .eq("id", teamId);
-
-      if (updateErr) return { error: updateErr.message };
-
-      revalidatePath("/registration");
-      return {
-        success: true,
-        status: "Partially Checked In",
-        message: `${presentMembers.length}/${totalMembers} members present. All members required for full check-in.`,
-      };
+      return { error: `All members must be present for check-in. Only ${presentMembers.length}/${totalMembers} present.` };
     }
 
     if (checkInRule === "ANY_MEMBER" && presentMembers.length === 0) {

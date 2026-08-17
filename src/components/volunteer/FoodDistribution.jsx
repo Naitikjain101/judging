@@ -1,25 +1,16 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
-import { searchTeams, distributeCoupon } from "@/app/volunteer/actions";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { searchTeams, markFoodIssued } from "@/app/volunteer/actions";
 import { toast } from "sonner";
-import { Search, CheckCircle, Ticket, X } from "lucide-react";
+import { Search, CheckCircle, Ticket, AlertTriangle, AlertCircle } from "lucide-react";
 
-/**
- * Food distribution panel — auto-scoped to a single hackathon.
- * Shows team search, package selection, payment method picker,
- * and coupon issuance with duplicate prevention.
- */
-export default function FoodDistribution({ hackathon, packages }) {
+export default function FoodDistribution({ hackathon }) {
   const hackathonId = hackathon.id;
   const [query, setQuery] = useState("");
   const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [processingId, setProcessingId] = useState(null);
-
-  // Payment dialog state
-  const [paymentDialog, setPaymentDialog] = useState(null); // { team, pkg }
-  const [paymentMethod, setPaymentMethod] = useState("UPI");
 
   const fetchTeams = useCallback(async () => {
     if (!hackathonId) return;
@@ -40,39 +31,67 @@ export default function FoodDistribution({ hackathon, packages }) {
     return () => clearTimeout(timer);
   }, [query, fetchTeams]);
 
-  const handleIssueCoupon = async (team, pkg, amount, method) => {
-    const key = team.id + pkg.id;
-    setProcessingId(key);
-    const res = await distributeCoupon(team.id, hackathonId, pkg.id, method, amount);
+  const handleIssueCoupon = async (team) => {
+    if (team.status !== "Checked-In") {
+      toast.error("Team is not checked in.");
+      return;
+    }
+    if (!team.food_purchased || team.food_payment_status !== "Paid") {
+      toast.error("Team is not eligible for food.");
+      return;
+    }
+    
+    setProcessingId(team.id);
+    const res = await markFoodIssued(team.id, hackathonId);
     setProcessingId(null);
-    setPaymentDialog(null);
+    
     if (res.error) {
       toast.error(res.error);
     } else {
-      toast.success(`${pkg.name} coupon issued to ${team.name}`);
+      toast.success(`Coupons issued to ${team.name}`);
       fetchTeams();
     }
   };
 
-  const handlePackageClick = (team, pkg) => {
-    if (pkg.price > 0) {
-      // Show payment method dialog
-      setPaymentDialog({ team, pkg });
-      setPaymentMethod("UPI");
-    } else {
-      handleIssueCoupon(team, pkg, 0, "Prepaid");
-    }
-  };
+  const stats = useMemo(() => {
+    return {
+      eligible: teams.filter(t => t.food_purchased && t.food_payment_status === "Paid").length,
+      distributed: teams.filter(t => t.food_issued).length,
+      notCheckedIn: teams.filter(t => t.status !== "Checked-In").length,
+    };
+  }, [teams]);
 
   return (
     <div>
+      {/* Counters */}
+      <div className="card" style={{ marginBottom: '2rem', display: 'flex', gap: '2rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '3rem', flex: 1, justifyContent: 'flex-start' }}>
+          <div style={{ textAlign: 'center' }}>
+            <div className="score-big">{stats.eligible}</div>
+            <div className="eyebrow">Eligible Teams</div>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div className="score-big" style={{ color: 'var(--success)' }}>{stats.distributed}</div>
+            <div className="eyebrow">Distributed</div>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div className="score-big" style={{ color: 'var(--accent-primary)' }}>{Math.max(0, stats.eligible - stats.distributed)}</div>
+            <div className="eyebrow">Remaining</div>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div className="score-big" style={{ color: 'var(--warn)' }}>{stats.notCheckedIn}</div>
+            <div className="eyebrow">Not Checked In</div>
+          </div>
+        </div>
+      </div>
+
       {/* Search */}
       <div style={{ position: 'relative', width: '100%', marginBottom: '2rem' }}>
         <Search size={18} style={{ position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
         <input 
           className="input" 
           style={{ paddingLeft: 48, fontSize: '1.125rem', padding: '1.25rem 1rem 1.25rem 48px', borderRadius: 16, background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-focus)' }}
-          placeholder="Search team name, ID, or phone..." 
+          placeholder="Search team name, ID, leader, or phone..." 
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           autoFocus
@@ -94,118 +113,99 @@ export default function FoodDistribution({ hackathon, packages }) {
         ) : (
           teams.map(t => {
             const isCheckedIn = t.status === "Checked-In";
+            const isEligible = t.food_purchased && t.food_payment_status === "Paid";
+            
+            let membersCount = 0;
+            try { membersCount = JSON.parse(t.members || "[]").length; } catch(e) {}
+
             return (
-              <div key={t.id} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', opacity: isCheckedIn ? 1 : 0.6 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <h3 style={{ fontSize: '1.25rem', margin: '0 0 0.25rem 0' }}>{t.name} <span className="muted text-sm mono">#{t.team_code}</span></h3>
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                      <span className={`badge ${isCheckedIn ? 'badge-active' : ''}`}>{t.status}</span>
-                      {isCheckedIn && <span className="badge">Team {t.team_number}</span>}
+              <div key={t.id} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', opacity: isCheckedIn ? 1 : 0.8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+                  
+                  {/* Team Details */}
+                  <div style={{ flex: 1, minWidth: '300px' }}>
+                    <h3 style={{ fontSize: '1.25rem', margin: '0 0 0.5rem 0', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      {t.name}
+                      <span className="muted text-sm mono">#{t.team_code}</span>
+                    </h3>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '1rem' }}>
+                      <div>
+                        <div className="muted text-xs">Leader Name</div>
+                        <div style={{ fontWeight: 500 }}>{t.leader_name || "N/A"}</div>
+                      </div>
+                      <div>
+                        <div className="muted text-xs">Leader Phone</div>
+                        <div style={{ fontWeight: 500 }}>{t.phone || "N/A"}</div>
+                      </div>
+                      <div>
+                        <div className="muted text-xs">Team Size</div>
+                        <div style={{ fontWeight: 500 }}>{membersCount} Members</div>
+                      </div>
+                      {t.college && (
+                        <div>
+                          <div className="muted text-xs">College</div>
+                          <div style={{ fontWeight: 500 }}>{t.college}</div>
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
-
-                {!isCheckedIn && <div className="muted text-sm" style={{ color: 'var(--warn)' }}>Team must be checked in to receive coupons.</div>}
-
-                {isCheckedIn && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-                    {packages.map(pkg => {
-                      const issued = t.coupon_distributions?.find(d => d.package_id === pkg.id);
-                      if (issued) {
-                        return (
-                          <div key={pkg.id} style={{ padding: '1rem', background: 'var(--success-soft)', borderRadius: 12, border: '1px solid rgba(16, 185, 129, 0.2)' }}>
-                            <div className="flex-between">
-                              <span style={{ fontWeight: 600, color: 'var(--success)' }}>{pkg.name}</span>
-                              <CheckCircle size={18} color="var(--success)" />
-                            </div>
-                            <div className="muted text-xs" style={{ marginTop: 4 }}>
-                              Issued {new Date(issued.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </div>
-                          </div>
-                        );
-                      }
-                      return (
-                        <div key={pkg.id} style={{ padding: '1rem', background: 'var(--bg-elevated)', borderRadius: 12, border: '1px solid var(--border-subtle)' }}>
-                          <div style={{ fontWeight: 600, marginBottom: 4 }}>{pkg.name}</div>
-                          <div className="muted text-sm" style={{ marginBottom: 12 }}>{pkg.price > 0 ? `₹${pkg.price}` : 'Prepaid/Included'}</div>
-                          
-                          <button 
-                            className="btn btn-accent btn-sm" 
-                            style={{ width: '100%' }}
-                            disabled={processingId === (t.id + pkg.id)}
-                            onClick={() => handlePackageClick(t, pkg)}
-                          >
-                            <Ticket size={14} /> {processingId === (t.id + pkg.id) ? "Issuing..." : "Issue Coupon"}
-                          </button>
+                  
+                  {/* Status & Action */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', minWidth: '250px' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <span className={`badge ${isCheckedIn ? 'badge-active' : 'badge-warning'}`}>
+                        {isCheckedIn ? "Checked In" : "Not Checked In"}
+                      </span>
+                      
+                      {!t.food_purchased ? (
+                        <span className="badge badge-default">Food Not Included</span>
+                      ) : (
+                        <span className={`badge ${t.food_payment_status === 'Paid' ? 'badge-active' : 'badge-error'}`}>
+                          Food: {t.food_payment_status}
+                        </span>
+                      )}
+                      
+                      {isEligible && (
+                        <span className="badge badge-default">Qty: {t.food_quantity || membersCount}</span>
+                      )}
+                    </div>
+                    
+                    <div style={{ marginTop: '0.5rem' }}>
+                      {t.food_issued ? (
+                        <div style={{ padding: '0.75rem 1rem', background: 'var(--success-soft)', borderRadius: 8, border: '1px solid rgba(16, 185, 129, 0.2)', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', fontWeight: 600 }}>
+                          <CheckCircle size={18} /> Coupon Distributed
+                          <span className="text-xs" style={{ marginLeft: 'auto', fontWeight: 400 }}>
+                            {new Date(t.food_issued_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
                         </div>
-                      );
-                    })}
+                      ) : !isCheckedIn ? (
+                        <div style={{ padding: '0.75rem 1rem', background: 'rgba(245, 158, 11, 0.1)', borderRadius: 8, border: '1px solid rgba(245, 158, 11, 0.2)', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--warn)', fontWeight: 600 }}>
+                          <AlertTriangle size={18} /> Not Checked In ⚠️
+                        </div>
+                      ) : !isEligible ? (
+                        <div style={{ padding: '0.75rem 1rem', background: 'rgba(239, 68, 68, 0.1)', borderRadius: 8, border: '1px solid rgba(239, 68, 68, 0.2)', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--error)', fontWeight: 600 }}>
+                          <AlertCircle size={18} /> Not Eligible ❌
+                        </div>
+                      ) : (
+                        <button 
+                          className="btn btn-accent" 
+                          style={{ width: '100%', padding: '0.75rem' }}
+                          disabled={processingId === t.id}
+                          onClick={() => handleIssueCoupon(t)}
+                        >
+                          <Ticket size={18} /> {processingId === t.id ? "Processing..." : "Mark Coupon Distributed"}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                )}
+
+                </div>
               </div>
             );
           })
         )}
       </div>
-
-      {/* Payment Method Dialog */}
-      {paymentDialog && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
-          background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
-          display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000
-        }}>
-          <div className="card" style={{ width: '100%', maxWidth: 400, padding: '2rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-              <h3 style={{ margin: 0, fontSize: '1.2rem' }}>Payment Method</h3>
-              <button onClick={() => setPaymentDialog(null)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                <X size={20} />
-              </button>
-            </div>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <div className="muted text-sm" style={{ marginBottom: 8 }}>
-                <strong>{paymentDialog.pkg.name}</strong> for <strong>{paymentDialog.team.name}</strong>
-              </div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--accent-primary)' }}>
-                ₹{paymentDialog.pkg.price}
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.5rem' }}>
-              {["Cash", "UPI", "Card"].map(method => (
-                <label key={method} style={{
-                  display: 'flex', alignItems: 'center', gap: '1rem', padding: '1rem',
-                  border: `2px solid ${paymentMethod === method ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
-                  borderRadius: 12, cursor: 'pointer',
-                  background: paymentMethod === method ? 'var(--accent-soft)' : 'transparent',
-                  transition: 'all 0.2s'
-                }}>
-                  <input 
-                    type="radio" 
-                    name="payment" 
-                    value={method}
-                    checked={paymentMethod === method}
-                    onChange={() => setPaymentMethod(method)}
-                    style={{ width: 18, height: 18, accentColor: 'var(--accent-primary)' }}
-                  />
-                  <span style={{ fontWeight: 500, fontSize: '1.1rem' }}>{method}</span>
-                </label>
-              ))}
-            </div>
-
-            <button 
-              className="btn btn-accent" 
-              style={{ width: '100%', padding: '1rem', fontSize: '1.1rem' }}
-              disabled={processingId === (paymentDialog.team.id + paymentDialog.pkg.id)}
-              onClick={() => handleIssueCoupon(paymentDialog.team, paymentDialog.pkg, paymentDialog.pkg.price, paymentMethod)}
-            >
-              {processingId === (paymentDialog.team.id + paymentDialog.pkg.id) ? "Processing..." : `Confirm ${paymentMethod} Payment & Issue`}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

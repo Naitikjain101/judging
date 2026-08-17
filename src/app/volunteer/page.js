@@ -56,13 +56,6 @@ export default async function VolunteerPage() {
     );
   }
 
-  // Fetch ONLY this hackathon's food packages
-  const { data: packages } = await admin
-    .from("food_packages")
-    .select("*")
-    .eq("hackathon_id", hackathon.id)
-    .order("name");
-
   return (
     <div className="page" style={{ maxWidth: 1000 }}>
       <TerminalPath user="volunteer" segments={[hackathon.name, "food-distribution"]} />
@@ -74,7 +67,7 @@ export default async function VolunteerPage() {
         </div>
       </div>
 
-      <FoodDistribution hackathon={hackathon} packages={packages || []} />
+      <FoodDistribution hackathon={hackathon} />
     </div>
   );
 }

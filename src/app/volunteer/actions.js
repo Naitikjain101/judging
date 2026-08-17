@@ -36,22 +36,22 @@ export async function searchTeams(hackathonId, query) {
   let dbQuery = supabase
     .from("teams")
     .select(
-      "*, food_purchases(id, package_id, amount), coupon_distributions(id, package_id, created_at)"
+      "id, name, team_code, leader_name, email, phone, college, members, status, food_purchased, food_payment_status, food_quantity, food_issued, food_issued_at"
     )
     .eq("hackathon_id", hackathonId)
     .order("name");
 
   if (query) {
     dbQuery = dbQuery.or(
-      `name.ilike.%${query}%,team_code.ilike.%${query}%,phone.ilike.%${query}%`
+      `name.ilike.%${query}%,team_code.ilike.%${query}%,leader_name.ilike.%${query}%,phone.ilike.%${query}%`
     );
   }
-  const { data, error } = await dbQuery.limit(20);
+  const { data, error } = await dbQuery.limit(50);
   if (error) return { error: error.message };
   return { teams: data };
 }
 
-export async function distributeCoupon(teamId, hackathonId, packageId, paymentMethod, amount) {
+export async function markFoodIssued(teamId, hackathonId) {
   const supabase = await createPortalClient("volunteer");
 
   // 1. Validate volunteer assignment
@@ -63,71 +63,40 @@ export async function distributeCoupon(teamId, hackathonId, packageId, paymentMe
 
   const admin = createAdminClient();
 
-  // 2. Verify team belongs to this hackathon
+  // 2. Verify team belongs to this hackathon and check eligibility
   const { data: team } = await admin
     .from("teams")
-    .select("id")
+    .select("id, food_purchased, food_payment_status, status, food_issued")
     .eq("id", teamId)
     .eq("hackathon_id", hackathonId)
     .single();
 
   if (!team) return { error: "Team not found in this hackathon." };
 
-  // 3. Verify package belongs to this hackathon
-  const { data: pkg } = await admin
-    .from("food_packages")
-    .select("id, price")
-    .eq("id", packageId)
-    .eq("hackathon_id", hackathonId)
-    .single();
-
-  if (!pkg) return { error: "Package not found in this hackathon." };
-
-  // 4. Check for duplicate coupon distribution (the DB UNIQUE constraint
-  //    provides the real guarantee, but we check first for a better error msg)
-  const { data: existing } = await admin
-    .from("coupon_distributions")
-    .select("id")
-    .eq("hackathon_id", hackathonId)
-    .eq("team_id", teamId)
-    .eq("package_id", packageId)
-    .maybeSingle();
-
-  if (existing) {
-    return { error: "This coupon has already been issued to this team." };
+  if (team.food_issued) {
+    return { error: "This team has already been issued their food coupons." };
   }
 
-  // 5. Record purchase if amount > 0
-  if (amount > 0 && paymentMethod && paymentMethod !== "Prepaid") {
-    if (!["Cash", "UPI", "Card"].includes(paymentMethod)) {
-      return { error: "Invalid payment method." };
-    }
-    const { error: purchaseErr } = await admin.from("food_purchases").insert({
-      hackathon_id: hackathonId,
-      team_id: teamId,
-      package_id: packageId,
-      payment_method: paymentMethod,
-      amount: amount,
-      volunteer_id: volCheck.userId,
-    });
-    if (purchaseErr) return { error: purchaseErr.message };
+  if (team.status !== "Checked-In") {
+    return { error: "Team must be checked in first." };
   }
 
-  // 6. Record coupon distribution (UNIQUE constraint prevents duplicates)
-  const { error: distErr } = await admin.from("coupon_distributions").insert({
-    hackathon_id: hackathonId,
-    team_id: teamId,
-    package_id: packageId,
-    volunteer_id: volCheck.userId,
-  });
-
-  if (distErr) {
-    // Duplicate key violation
-    if (distErr.code === "23505") {
-      return { error: "This coupon has already been issued to this team." };
-    }
-    return { error: distErr.message };
+  if (!team.food_purchased || team.food_payment_status !== "Paid") {
+    return { error: "Team is not eligible for food (Not included or unpaid)." };
   }
+
+  // 3. Update the team
+  const { error: updateErr } = await admin
+    .from("teams")
+    .update({
+      food_issued: true,
+      food_issued_at: new Date().toISOString(),
+      food_issued_by: volCheck.userId
+    })
+    .eq("id", teamId)
+    .eq("hackathon_id", hackathonId);
+
+  if (updateErr) return { error: updateErr.message };
 
   revalidatePath("/volunteer");
   return { success: true };

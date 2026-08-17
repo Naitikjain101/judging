@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { addStaff, deleteStaff } from "@/app/organizer/hackathons/actions";
 import SubmitButton from "@/components/SubmitButton";
-import { Copy, Check, X } from "lucide-react";
+import { Copy, Check, ShieldAlert, Key } from "lucide-react";
 
 export default function StaffPanel({ hackathonId, staff }) {
   const router = useRouter();
@@ -60,28 +60,59 @@ export default function StaffPanel({ hackathonId, staff }) {
       </div>
 
       {newCredentials && (
-        <div className="alert alert-success" style={{ marginBottom: 16, position: 'relative' }}>
-          <button 
-            onClick={() => setNewCredentials(null)} 
-            style={{ position: 'absolute', right: 12, top: 12, background: 'none', border: 'none', cursor: 'pointer' }}
-          >
-            <X size={16} />
-          </button>
-          <h4 style={{ margin: "0 0 8px 0" }}>Staff Member Created Successfully</h4>
-          <p style={{ margin: "0 0 12px 0", fontSize: 13 }}>Please securely save these credentials and share them with the staff member. <strong>They will not be shown again.</strong></p>
-          <div style={{ display: 'flex', gap: 16 }}>
-            <div>
-              <div className="muted text-xs">Staff Code</div>
-              <code style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => handleCopy(newCredentials.staffCode, 'new-code')}>
-                {newCredentials.staffCode} {copiedId === 'new-code' ? <Check size={14} /> : <Copy size={14} />}
-              </code>
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+          background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          padding: '2rem'
+        }}>
+          <div className="card" style={{ width: '100%', maxWidth: 500, padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem', boxShadow: '0 20px 40px rgba(0,0,0,0.2)' }}>
+            
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <div style={{ background: 'var(--success-soft)', color: 'var(--success)', padding: '1rem', borderRadius: '50%' }}>
+                <Key size={24} />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.25rem' }}>Staff Created Successfully</h3>
+                <p className="muted" style={{ margin: '4px 0 0 0', fontSize: 13 }}>Share these credentials securely with the staff member.</p>
+              </div>
             </div>
-            <div>
-              <div className="muted text-xs">Password</div>
-              <code style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => handleCopy(newCredentials.password, 'new-pass')}>
-                {newCredentials.password} {copiedId === 'new-pass' ? <Check size={14} /> : <Copy size={14} />}
-              </code>
+
+            <div style={{ background: 'var(--bg)', border: '1px solid var(--border-subtle)', borderRadius: 12, padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <div className="muted text-xs" style={{ marginBottom: 4 }}>Staff ID / Username</div>
+                <code style={{ fontSize: '1.1rem', background: 'transparent', padding: 0 }}>{newCredentials.staffCode}</code>
+              </div>
+              <div>
+                <div className="muted text-xs" style={{ marginBottom: 4 }}>Temporary Password</div>
+                <code style={{ fontSize: '1.1rem', background: 'transparent', padding: 0 }}>{newCredentials.password}</code>
+              </div>
             </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--warn)', fontSize: 13, fontWeight: 500 }}>
+              <ShieldAlert size={16} /> These credentials will not be shown again.
+            </div>
+
+            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+              <button 
+                className="btn btn-secondary" 
+                style={{ flex: 1, padding: '0.75rem' }}
+                onClick={() => {
+                  const text = `Hackathon Login\nUsername: ${newCredentials.staffCode}\nPassword: ${newCredentials.password}`;
+                  handleCopy(text, 'full-creds');
+                }}
+              >
+                {copiedId === 'full-creds' ? <><Check size={18} /> Copied!</> : <><Copy size={18} /> Copy Credentials</>}
+              </button>
+              <button 
+                className="btn btn-primary" 
+                style={{ flex: 1, padding: '0.75rem' }}
+                onClick={() => setNewCredentials(null)}
+              >
+                Done
+              </button>
+            </div>
+
           </div>
         </div>
       )}

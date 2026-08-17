@@ -4,7 +4,7 @@ import { useState } from "react";
 import { X, CheckCircle, Clock, User, Phone, Mail, Hash, Check } from "lucide-react";
 import SubmitButton from "@/components/SubmitButton";
 
-export default function TeamDetailsDrawer({ team, hackathon, onClose, onCheckInFull, onCheckInPartial }) {
+export default function TeamDetailsDrawer({ team, hackathon, onClose, onCheckInFull }) {
   const [members, setMembers] = useState(() => {
     try {
       return JSON.parse(team.members || "[]");
@@ -23,10 +23,6 @@ export default function TeamDetailsDrawer({ team, hackathon, onClose, onCheckInF
   const totalCount = members.length;
   const progressPercent = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
 
-  const handlePartialSubmit = async (e) => {
-    e.preventDefault();
-    await onCheckInPartial(team.id, members);
-  };
 
   const handleFullSubmit = async (e) => {
     e.preventDefault();
@@ -147,12 +143,6 @@ export default function TeamDetailsDrawer({ team, hackathon, onClose, onCheckInF
           <form onSubmit={handleFullSubmit}>
             <SubmitButton className="btn btn-primary" style={{ width: '100%', padding: '1rem', fontSize: '1rem' }} pendingText="Checking in...">
               <CheckCircle size={18} /> Check In Entire Team
-            </SubmitButton>
-          </form>
-          
-          <form onSubmit={handlePartialSubmit}>
-            <SubmitButton className="btn btn-secondary" style={{ width: '100%', padding: '1rem', fontSize: '1rem' }} pendingText="Saving...">
-              <Clock size={18} /> Save Partial Check-In
             </SubmitButton>
           </form>
         </div>

@@ -50,35 +50,13 @@ export default function CheckInDashboard({ hackathon }) {
     if (res.error) {
       toast.error(res.error);
     } else {
-      if (res.status === 'Checked-In') {
-        toast.success(`Checked in! Team: ${res.team_number}, Table: ${res.table_number}`);
-      } else if (res.status === 'Partially Checked In') {
-        toast.success(res.message || "Partial check-in saved.");
-      } else {
-        toast.success("Check-in updated.");
-      }
+      toast.success(`Checked in! Team: ${res.team_number}, Table: ${res.table_number}`);
       setSelectedTeam(null);
       fetchTeams();
     }
   };
 
-  const handleCheckInPartial = async (teamId, members) => {
-    setProcessingId(teamId);
-    const res = await checkInTeam(teamId, hackathonId, members);
-    setProcessingId(null);
-    
-    if (res.error) {
-      toast.error(res.error);
-    } else {
-      if (res.status === 'Checked-In') {
-        toast.success(`Fully Checked in! Team: ${res.team_number}, Table: ${res.table_number}`);
-      } else {
-        toast.success(res.message || "Saved partial check-in.");
-      }
-      setSelectedTeam(null);
-      fetchTeams();
-    }
-  };
+
 
   const handleUndo = async (team) => {
     if (!confirm(`Undo check-in for ${team.name}? This removes their team and table number.`)) return;
@@ -98,8 +76,7 @@ export default function CheckInDashboard({ hackathon }) {
   const stats = {
     total: teams.length,
     checkedIn: teams.filter(t => t.status === "Checked-In").length,
-    partial: teams.filter(t => t.status === "Partially Checked In").length,
-    pending: teams.filter(t => t.status === "Registered").length
+    pending: teams.filter(t => t.status !== "Checked-In").length
   };
   
   const recentCheckIns = [...teams]
@@ -120,12 +97,6 @@ export default function CheckInDashboard({ hackathon }) {
             <div className="score-big" style={{ color: 'var(--success)' }}>{stats.checkedIn}</div>
             <div className="eyebrow">Checked In</div>
           </div>
-          {stats.partial > 0 && (
-            <div style={{ textAlign: 'center' }}>
-              <div className="score-big" style={{ color: 'var(--warn)' }}>{stats.partial}</div>
-              <div className="eyebrow">Partial</div>
-            </div>
-          )}
           <div style={{ textAlign: 'center' }}>
             <div className="score-big" style={{ color: 'var(--warn)' }}>{stats.pending}</div>
             <div className="eyebrow">Pending</div>
@@ -177,16 +148,13 @@ export default function CheckInDashboard({ hackathon }) {
                 ) : (
                   teams.map((t) => {
                     const isCheckedIn = t.status === "Checked-In";
-                    const isPartiallyCheckedIn = t.status === "Partially Checked In";
-                    let statusColor = '';
-                    if (isCheckedIn) statusColor = 'badge-active';
-                    else if (isPartiallyCheckedIn) statusColor = 'badge-warning';
+                    let statusColor = isCheckedIn ? 'badge-active' : '';
 
                     return (
                       <tr 
                         key={t.id} 
                         style={{ 
-                          background: isCheckedIn ? 'rgba(16, 185, 129, 0.05)' : isPartiallyCheckedIn ? 'rgba(245, 158, 11, 0.05)' : 'transparent',
+                          background: isCheckedIn ? 'rgba(16, 185, 129, 0.05)' : 'transparent',
                           cursor: 'pointer',
                           transition: 'background 0.2s'
                         }}
@@ -219,7 +187,7 @@ export default function CheckInDashboard({ hackathon }) {
                               <span className="badge" style={{ background: 'var(--bg-elevated)', color: '#FFF' }}>Table {t.table_number}</span>
                             </div>
                           ) : (
-                            <span className="muted text-xs italic">{isPartiallyCheckedIn ? 'Waiting for members' : 'Pending Check-in'}</span>
+                            <span className="muted text-xs italic">Pending Check-in</span>
                           )}
                         </td>
                         <td style={{ textAlign: 'right' }}>
@@ -275,7 +243,6 @@ export default function CheckInDashboard({ hackathon }) {
           hackathon={hackathon}
           onClose={() => setSelectedTeam(null)}
           onCheckInFull={handleCheckInFull}
-          onCheckInPartial={handleCheckInPartial}
         />
       )}
     </div>
