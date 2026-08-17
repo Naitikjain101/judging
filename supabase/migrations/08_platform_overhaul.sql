@@ -92,6 +92,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Hackathons
 DROP POLICY IF EXISTS "Public read hackathons" ON public.hackathons;
+DROP POLICY IF EXISTS "Hackathons visibility" ON public.hackathons;
 CREATE POLICY "Hackathons visibility" ON public.hackathons FOR SELECT TO authenticated
 USING (
   created_by = auth.uid() OR
@@ -101,6 +102,7 @@ USING (
 
 -- Teams
 DROP POLICY IF EXISTS "Enable read access for all authenticated users" ON public.teams;
+DROP POLICY IF EXISTS "Teams visibility" ON public.teams;
 CREATE POLICY "Teams visibility" ON public.teams FOR SELECT TO authenticated
 USING (
   is_hackathon_organizer(hackathon_id) OR
@@ -110,6 +112,7 @@ USING (
 
 -- Judges
 DROP POLICY IF EXISTS "Enable read access for all authenticated users" ON public.judges;
+DROP POLICY IF EXISTS "Judges visibility" ON public.judges;
 CREATE POLICY "Judges visibility" ON public.judges FOR SELECT TO authenticated
 USING (
   is_hackathon_organizer(hackathon_id) OR
@@ -118,6 +121,7 @@ USING (
 
 -- Staff
 DROP POLICY IF EXISTS "Enable read access for all authenticated users" ON public.staff;
+DROP POLICY IF EXISTS "Staff visibility" ON public.staff;
 CREATE POLICY "Staff visibility" ON public.staff FOR SELECT TO authenticated
 USING (
   is_hackathon_organizer(hackathon_id) OR
@@ -126,6 +130,7 @@ USING (
 
 -- Rounds
 DROP POLICY IF EXISTS "Enable read access for all authenticated users" ON public.rounds;
+DROP POLICY IF EXISTS "Rounds visibility" ON public.rounds;
 CREATE POLICY "Rounds visibility" ON public.rounds FOR SELECT TO authenticated
 USING (
   is_hackathon_organizer(hackathon_id) OR
@@ -135,6 +140,7 @@ USING (
 
 -- Criteria
 DROP POLICY IF EXISTS "Enable read access for all authenticated users" ON public.criteria;
+DROP POLICY IF EXISTS "Criteria visibility" ON public.criteria;
 CREATE POLICY "Criteria visibility" ON public.criteria FOR SELECT TO authenticated
 USING (
   EXISTS (
@@ -148,6 +154,7 @@ USING (
 
 -- Round Teams
 DROP POLICY IF EXISTS "Enable read access for all authenticated users" ON public.round_teams;
+DROP POLICY IF EXISTS "Round teams visibility" ON public.round_teams;
 CREATE POLICY "Round teams visibility" ON public.round_teams FOR SELECT TO authenticated
 USING (
   EXISTS (
@@ -161,6 +168,7 @@ USING (
 
 -- Judge Assignments
 DROP POLICY IF EXISTS "Enable read access for all authenticated users" ON public.round_judge_assignments;
+DROP POLICY IF EXISTS "Assignments visibility" ON public.round_judge_assignments;
 CREATE POLICY "Assignments visibility" ON public.round_judge_assignments FOR SELECT TO authenticated
 USING (
   EXISTS (
@@ -172,6 +180,7 @@ USING (
 
 -- Submissions
 DROP POLICY IF EXISTS "Enable read access for all authenticated users" ON public.submissions;
+DROP POLICY IF EXISTS "Submissions visibility" ON public.submissions;
 CREATE POLICY "Submissions visibility" ON public.submissions FOR SELECT TO authenticated
 USING (
   EXISTS (
@@ -183,6 +192,7 @@ USING (
 
 -- Score Details
 DROP POLICY IF EXISTS "Enable read access for all authenticated users" ON public.score_details;
+DROP POLICY IF EXISTS "Score details visibility" ON public.score_details;
 CREATE POLICY "Score details visibility" ON public.score_details FOR SELECT TO authenticated
 USING (
   EXISTS (
@@ -197,6 +207,7 @@ USING (
 
 -- Food Packages
 DROP POLICY IF EXISTS "Enable read access for all authenticated users" ON public.food_packages;
+DROP POLICY IF EXISTS "Food packages visibility" ON public.food_packages;
 CREATE POLICY "Food packages visibility" ON public.food_packages FOR SELECT TO authenticated
 USING (
   is_hackathon_organizer(hackathon_id) OR
@@ -205,6 +216,7 @@ USING (
 
 -- Food Purchases
 DROP POLICY IF EXISTS "Enable read access for all authenticated users" ON public.food_purchases;
+DROP POLICY IF EXISTS "Food purchases visibility" ON public.food_purchases;
 CREATE POLICY "Food purchases visibility" ON public.food_purchases FOR SELECT TO authenticated
 USING (
   is_hackathon_organizer(hackathon_id) OR
@@ -213,6 +225,7 @@ USING (
 
 -- Coupon Distributions
 DROP POLICY IF EXISTS "Enable read access for all authenticated users" ON public.coupon_distributions;
+DROP POLICY IF EXISTS "Coupon distributions visibility" ON public.coupon_distributions;
 CREATE POLICY "Coupon distributions visibility" ON public.coupon_distributions FOR SELECT TO authenticated
 USING (
   is_hackathon_organizer(hackathon_id) OR
