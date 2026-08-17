@@ -6,7 +6,6 @@ import TeamsPanel from "./TeamsPanel";
 import JudgesPanel from "./JudgesPanel";
 import RoundsPanel from "./RoundsPanel";
 import AnalyticsPanel from "./AnalyticsPanel";
-import CertificatesPanel from "./CertificatesPanel";
 import StaffPanel from "./StaffPanel";
 import SettingsPanel from "./SettingsPanel";
 
@@ -16,7 +15,6 @@ const TABS = [
   { key: "judges", label: "judges" },
   { key: "staff", label: "staff" },
   { key: "rounds", label: "rounds" },
-  { key: "certificates", label: "certificates" },
   { key: "settings", label: "settings" },
 ];
 
@@ -66,7 +64,6 @@ export default function HackathonTabs({ hackathonId, hackathon, teams, judges, r
       {active === "judges" && <JudgesPanel hackathonId={hackathonId} judges={judges} />}
       {active === "staff" && <StaffPanel hackathonId={hackathonId} staff={staff || []} />}
       {active === "rounds" && <RoundsPanel hackathonId={hackathonId} rounds={rounds} />}
-      {active === "certificates" && <CertificatesPanel hackathonId={hackathonId} teams={teams} />}
       {active === "settings" && <SettingsPanel hackathon={hackathon} />}
     </div>
   );

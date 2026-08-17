@@ -60,60 +60,37 @@ export default function StaffPanel({ hackathonId, staff }) {
       </div>
 
       {newCredentials && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
-          background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-          padding: '2rem'
-        }}>
-          <div className="card" style={{ width: '100%', maxWidth: 500, padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem', boxShadow: '0 20px 40px rgba(0,0,0,0.2)' }}>
-            
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <div style={{ background: 'var(--success-soft)', color: 'var(--success)', padding: '1rem', borderRadius: '50%' }}>
-                <Key size={24} />
-              </div>
-              <div>
-                <h3 style={{ margin: 0, fontSize: '1.25rem' }}>Staff Created Successfully</h3>
-                <p className="muted" style={{ margin: '4px 0 0 0', fontSize: 13 }}>Share these credentials securely with the staff member.</p>
+        <div style={{ marginBottom: 16, padding: 16, background: 'var(--success-soft)', border: '1px solid var(--success)', borderRadius: 8 }}>
+          <h4 style={{ color: 'var(--success)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Check size={18} /> Staff Created Successfully
+          </h4>
+          <div style={{ display: 'grid', gap: 8, marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span className="muted">Staff Code:</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="mono" style={{ fontWeight: 600 }}>{newCredentials.staffCode}</span>
+                <button onClick={() => handleCopy(newCredentials.staffCode, 'new-code')} className="btn btn-secondary btn-sm" style={{ padding: '2px 6px' }}>
+                  {copiedId === 'new-code' ? <Check size={12} /> : <Copy size={12} />} Copy
+                </button>
               </div>
             </div>
-
-            <div style={{ background: 'var(--bg)', border: '1px solid var(--border-subtle)', borderRadius: 12, padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div>
-                <div className="muted text-xs" style={{ marginBottom: 4 }}>Staff ID / Username</div>
-                <code style={{ fontSize: '1.1rem', background: 'transparent', padding: 0 }}>{newCredentials.staffCode}</code>
-              </div>
-              <div>
-                <div className="muted text-xs" style={{ marginBottom: 4 }}>Temporary Password</div>
-                <code style={{ fontSize: '1.1rem', background: 'transparent', padding: 0 }}>{newCredentials.password}</code>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span className="muted">Password:</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="mono" style={{ fontWeight: 600 }}>{newCredentials.password}</span>
+                <button onClick={() => handleCopy(newCredentials.password, 'new-pass')} className="btn btn-secondary btn-sm" style={{ padding: '2px 6px' }}>
+                  {copiedId === 'new-pass' ? <Check size={12} /> : <Copy size={12} />} Copy
+                </button>
               </div>
             </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--warn)', fontSize: 13, fontWeight: 500 }}>
-              <ShieldAlert size={16} /> These credentials will not be shown again.
-            </div>
-
-            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
-              <button 
-                className="btn btn-secondary" 
-                style={{ flex: 1, padding: '0.75rem' }}
-                onClick={() => {
-                  const text = `Hackathon Login\nUsername: ${newCredentials.staffCode}\nPassword: ${newCredentials.password}`;
-                  handleCopy(text, 'full-creds');
-                }}
-              >
-                {copiedId === 'full-creds' ? <><Check size={18} /> Copied!</> : <><Copy size={18} /> Copy Credentials</>}
-              </button>
-              <button 
-                className="btn btn-primary" 
-                style={{ flex: 1, padding: '0.75rem' }}
-                onClick={() => setNewCredentials(null)}
-              >
-                Done
-              </button>
-            </div>
-
           </div>
+          <button 
+            onClick={() => handleCopy(`Staff Code: ${newCredentials.staffCode}\nPassword: ${newCredentials.password}`, 'new-all')} 
+            className="btn btn-primary" 
+            style={{ width: '100%', display: 'flex', justifyContent: 'center', gap: 8 }}
+          >
+            {copiedId === 'new-all' ? <Check size={16} /> : <Copy size={16} />} Copy Login Credentials
+          </button>
         </div>
       )}
 

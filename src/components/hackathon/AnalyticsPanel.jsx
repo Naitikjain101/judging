@@ -1,95 +1,167 @@
 "use client";
-import { Users, Ticket, CheckCircle, PieChart, TrendingUp } from "lucide-react";
+import { useState } from "react";
+import { Users, Ticket, CheckCircle, PieChart, Utensils, IndianRupee, ArrowLeft } from "lucide-react";
 
-export default function AnalyticsPanel({ teams, packages, purchases, distributions }) {
-  // Check-in Stats
-  const checkedIn = teams.filter(t => t.status === "Checked-In").length;
-  const pending = teams.filter(t => t.status === "Registered").length;
-  const absent = teams.filter(t => t.status === "Absent").length;
-  const checkInRate = teams.length ? Math.round((checkedIn / teams.length) * 100) : 0;
+export default function AnalyticsPanel({ teams }) {
+  const [showDetails, setShowDetails] = useState(false);
 
-  // Food Stats
-  const revenue = purchases.reduce((sum, p) => sum + Number(p.amount), 0);
+  let totalMembers = 0;
+  let checkedInMembers = 0;
   
-  const packageStats = packages.map(pkg => {
-    const purchased = purchases.filter(p => p.package_id === pkg.id).length;
-    const distributed = distributions.filter(d => d.package_id === pkg.id).length;
-    return { ...pkg, purchased, distributed };
+  let eligibleMembers = 0;
+  let issuedCoupons = 0;
+  
+  let prepaidRevenue = 0;
+  let foodDeskRevenue = 0;
+  let prepaidCount = 0;
+  let foodDeskCount = 0;
+
+  const teamsWithStats = teams.map(t => {
+    let members = [];
+    try { members = JSON.parse(t.members || "[]"); } catch(e) {}
+    
+    totalMembers += members.length;
+    
+    const presentMembers = members.filter(m => m.status === 'Present');
+    checkedInMembers += presentMembers.length;
+    
+    const isPaid = t.food_payment_status === "Paid";
+    let teamIssued = 0;
+    
+    if (isPaid) {
+      if (t.food_payment_source === "FOOD_DESK") {
+         foodDeskRevenue += Number(t.food_payment_amount || 0);
+         foodDeskCount++;
+      } else {
+         prepaidRevenue += Number(t.food_payment_amount || 0);
+         prepaidCount++;
+      }
+      
+      presentMembers.forEach(m => {
+        eligibleMembers++;
+        if (m.food_issued) {
+          issuedCoupons++;
+          teamIssued++;
+        }
+      });
+    }
+
+    return {
+      ...t,
+      memberCount: members.length,
+      presentCount: presentMembers.length,
+      teamIssued
+    };
   });
+
+  const checkInRate = totalMembers > 0 ? Math.round((checkedInMembers / totalMembers) * 100) : 0;
+
+  if (showDetails) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "2rem" }}>
+        <button className="btn btn-secondary" style={{ alignSelf: "flex-start", display: "flex", gap: "0.5rem" }} onClick={() => setShowDetails(false)}>
+          <ArrowLeft size={16} /> Back to Dashboard
+        </button>
+
+        <h2 className="title" style={{ fontSize: "1.5rem", marginBottom: 0 }}>Food & Payment Accounts</h2>
+        
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "1rem" }}>
+          <div className="card" style={{ borderTop: "4px solid var(--accent-primary)" }}>
+            <div className="eyebrow">Prepaid Teams</div>
+            <div className="score-big">{prepaidCount}</div>
+            <div className="muted text-sm" style={{ marginTop: "0.5rem" }}>Amount: ₹{prepaidRevenue}</div>
+          </div>
+          <div className="card" style={{ borderTop: "4px solid var(--success)" }}>
+            <div className="eyebrow">Paid at Food Desk</div>
+            <div className="score-big">{foodDeskCount}</div>
+            <div className="muted text-sm" style={{ marginTop: "0.5rem" }}>Amount: ₹{foodDeskRevenue}</div>
+          </div>
+          <div className="card" style={{ borderTop: "4px solid var(--border-focus)" }}>
+            <div className="eyebrow">Total Food Revenue Collected</div>
+            <div className="score-big">₹{prepaidRevenue + foodDeskRevenue}</div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="table-wrapper">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Team</th>
+                  <th>Members (Present)</th>
+                  <th>Food Status</th>
+                  <th>Payment Type</th>
+                  <th>Amount</th>
+                  <th>Coupons Issued</th>
+                </tr>
+              </thead>
+              <tbody>
+                {teamsWithStats.map(t => {
+                  const isPaid = t.food_payment_status === "Paid";
+                  return (
+                    <tr key={t.id}>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{t.name}</div>
+                        <div className="mono text-sm muted">{t.team_code}</div>
+                      </td>
+                      <td>{t.memberCount} ({t.presentCount})</td>
+                      <td>
+                        {isPaid ? (
+                          <span className="badge badge-active">Paid</span>
+                        ) : (
+                          <span className="badge badge-warning">Unpaid</span>
+                        )}
+                      </td>
+                      <td>
+                        {isPaid ? (t.food_payment_source === "FOOD_DESK" ? "Food Desk" : "Prepaid") : "-"}
+                      </td>
+                      <td className="mono">
+                        {isPaid && t.food_payment_amount > 0 ? `₹${t.food_payment_amount}` : "-"}
+                      </td>
+                      <td>
+                        {isPaid ? `${t.teamIssued} / ${t.presentCount}` : "-"}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "2rem" }}>
       {/* Overview Cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "1rem" }}>
+        
         <div className="card">
           <div className="flex-between" style={{ marginBottom: "1rem" }}>
-            <span className="eyebrow" style={{ margin: 0 }}>Check-in Rate</span>
+            <span className="eyebrow" style={{ margin: 0 }}>Member Check-in Rate</span>
             <Users size={18} className="muted" />
           </div>
           <div className="score-big" style={{ fontSize: "2.5rem" }}>{checkInRate}%</div>
-          <div className="muted text-sm" style={{ marginTop: "0.5rem" }}>{checkedIn} of {teams.length} teams arrived</div>
+          <div className="muted text-sm" style={{ marginTop: "0.5rem" }}>{checkedInMembers} / {totalMembers} members checked in</div>
         </div>
 
-        <div className="card">
-          <div className="flex-between" style={{ marginBottom: "1rem" }}>
-            <span className="eyebrow" style={{ margin: 0 }}>Total Revenue</span>
-            <TrendingUp size={18} className="muted" />
-          </div>
-          <div className="score-big" style={{ fontSize: "2.5rem", color: "var(--success)" }}>₹{revenue}</div>
-          <div className="muted text-sm" style={{ marginTop: "0.5rem" }}>From on-spot food sales</div>
-        </div>
-
-        <div className="card">
+        <div 
+          className="card" 
+          style={{ cursor: "pointer", transition: "0.2s", border: "1px solid transparent" }}
+          onClick={() => setShowDetails(true)}
+          onMouseEnter={(e) => e.currentTarget.style.border = "1px solid var(--accent-primary)"}
+          onMouseLeave={(e) => e.currentTarget.style.border = "1px solid transparent"}
+        >
           <div className="flex-between" style={{ marginBottom: "1rem" }}>
             <span className="eyebrow" style={{ margin: 0 }}>Coupons Issued</span>
             <Ticket size={18} className="muted" />
           </div>
-          <div className="score-big" style={{ fontSize: "2.5rem", color: "var(--accent-primary)" }}>{distributions.length}</div>
-          <div className="muted text-sm" style={{ marginTop: "0.5rem" }}>Across all packages</div>
+          <div className="score-big" style={{ fontSize: "2.5rem", color: "var(--accent-primary)" }}>{issuedCoupons}</div>
+          <div className="muted text-sm" style={{ marginTop: "0.5rem" }}>/ {eligibleMembers} eligible members</div>
+          <div className="muted text-sm" style={{ marginTop: "1rem", color: "var(--accent-primary)", fontSize: "0.8rem", fontWeight: 600 }}>Click to view full Food Accounts &rarr;</div>
         </div>
-      </div>
 
-      {/* Package Breakdown */}
-      <div>
-        <h3 className="title" style={{ fontSize: "1.25rem", marginBottom: "1rem", display: "flex", alignItems: "center", gap: 8 }}>
-          <PieChart size={18} color="var(--accent-primary)" /> Food Packages Breakdown
-        </h3>
-        
-        {packageStats.length === 0 ? (
-          <div className="empty">No food packages configured.</div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1rem" }}>
-            {packageStats.map(pkg => (
-              <div key={pkg.id} className="card" style={{ padding: "1.5rem" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1rem" }}>
-                  <div>
-                    <h4 style={{ fontSize: "1.1rem", marginBottom: "0.25rem" }}>{pkg.name}</h4>
-                    <span className="badge">{pkg.type}</span>
-                  </div>
-                  <div style={{ fontWeight: 600, color: "var(--success)" }}>
-                    {pkg.price > 0 ? `₹${pkg.price}` : "Prepaid"}
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "1.5rem" }}>
-                  <div className="flex-between">
-                    <span className="muted text-sm">On-spot Sales</span>
-                    <span className="mono">{pkg.purchased}</span>
-                  </div>
-                  <div className="flex-between">
-                    <span className="muted text-sm">Coupons Distributed</span>
-                    <span className="mono" style={{ color: "var(--accent-primary)" }}>{pkg.distributed}</span>
-                  </div>
-                  
-                  {/* Mini Progress bar */}
-                  <div style={{ width: "100%", height: 6, background: "rgba(255,255,255,0.1)", borderRadius: 4, marginTop: 4, overflow: "hidden" }}>
-                    <div style={{ width: `${Math.min((pkg.distributed / Math.max(teams.length, 1)) * 100, 100)}%`, height: "100%", background: "var(--accent-gradient)" }} />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );

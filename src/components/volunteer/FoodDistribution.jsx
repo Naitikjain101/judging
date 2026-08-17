@@ -7,7 +7,7 @@ import { Search, CheckCircle, Ticket, AlertTriangle, AlertCircle, User, CreditCa
 export default function FoodDistribution({ hackathon }) {
   const hackathonId = hackathon.id;
   const [query, setQuery] = useState("");
-  const [teams, setTeams] = useState([]);
+  const [allTeams, setAllTeams] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [processingId, setProcessingId] = useState(null);
@@ -16,27 +16,37 @@ export default function FoodDistribution({ hackathon }) {
     if (!hackathonId) return;
     setLoading(true);
     setError(null);
-    const res = await searchTeams(hackathonId, query);
+    const res = await searchTeams(hackathonId, "");
     if (res.error) {
       setError(res.error);
       toast.error(res.error);
     } else {
-      setTeams(res.teams || []);
+      setAllTeams(res.teams || []);
     }
     setLoading(false);
-  }, [hackathonId, query]);
+  }, [hackathonId]);
 
   useEffect(() => {
-    const timer = setTimeout(() => { fetchTeams(); }, 300);
-    return () => clearTimeout(timer);
-  }, [query, fetchTeams]);
+    fetchTeams();
+  }, [fetchTeams]);
+
+  const filteredTeams = useMemo(() => {
+    if (!query.trim()) return allTeams;
+    const lower = query.toLowerCase();
+    return allTeams.filter(t => 
+      t.name?.toLowerCase().includes(lower) || 
+      t.team_code?.toLowerCase().includes(lower) || 
+      t.leader_name?.toLowerCase().includes(lower) || 
+      t.phone?.includes(lower)
+    );
+  }, [allTeams, query]);
 
   const handleIssueCoupon = async (teamId, memberIndex) => {
     setProcessingId(`${teamId}-${memberIndex}`);
     
     // Optimistic Update
-    const previousTeams = [...teams];
-    setTeams(teams.map(t => {
+    const previousTeams = [...allTeams];
+    setAllTeams(allTeams.map(t => {
       if (t.id === teamId) {
         let updatedMembers = [];
         try { updatedMembers = JSON.parse(t.members || "[]"); } catch(e) {}
@@ -54,31 +64,34 @@ export default function FoodDistribution({ hackathon }) {
     
     if (res.error) {
       toast.error(res.error);
-      setTeams(previousTeams); // Rollback
+      setAllTeams(previousTeams); // Rollback
     } else {
       toast.success("Coupon distributed successfully!");
     }
   };
 
   const handleCollectPayment = async (team) => {
-    if (!confirm(`Confirm payment collected for team ${team.name}?`)) return;
+    const amountStr = prompt(`Enter amount collected for team ${team.name} (₹):`, "0");
+    if (amountStr === null) return;
+    const amount = Number(amountStr);
+
     setProcessingId(`payment-${team.id}`);
     
     // Optimistic Update
-    const previousTeams = [...teams];
-    setTeams(teams.map(t => {
+    const previousTeams = [...allTeams];
+    setAllTeams(allTeams.map(t => {
       if (t.id === team.id) {
-        return { ...t, food_payment_status: "Paid" };
+        return { ...t, food_payment_status: "Paid", food_payment_amount: amount };
       }
       return t;
     }));
 
-    const res = await collectPayment(team.id, hackathonId);
+    const res = await collectPayment(team.id, hackathonId, amount);
     setProcessingId(null);
 
     if (res.error) {
       toast.error(res.error);
-      setTeams(previousTeams); // Rollback
+      setAllTeams(previousTeams); // Rollback
     } else {
       toast.success(`Payment collected! Team ${team.name} is now eligible for food.`);
     }
@@ -88,8 +101,8 @@ export default function FoodDistribution({ hackathon }) {
     let eligibleCoupons = 0;
     let distributedCoupons = 0;
     
-    teams.forEach(t => {
-      if (t.food_purchased && t.food_payment_status === "Paid") {
+    allTeams.forEach(t => {
+      if (t.food_payment_status === "Paid") {
         let members = [];
         try { members = JSON.parse(t.members || "[]"); } catch(e) {}
         
@@ -106,9 +119,9 @@ export default function FoodDistribution({ hackathon }) {
       eligible: eligibleCoupons,
       distributed: distributedCoupons,
       remaining: Math.max(0, eligibleCoupons - distributedCoupons),
-      notCheckedIn: teams.filter(t => t.status === "Registered").length,
+      notCheckedIn: allTeams.filter(t => t.status === "Registered").length,
     };
-  }, [teams]);
+  }, [allTeams]);
 
   return (
     <div>
@@ -155,12 +168,12 @@ export default function FoodDistribution({ hackathon }) {
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        {loading && teams.length === 0 ? (
+        {loading && allTeams.length === 0 ? (
           <div className="text-center muted">Searching...</div>
-        ) : teams.length === 0 && !error ? (
+        ) : filteredTeams.length === 0 && !error ? (
           <div className="empty">No teams found.</div>
         ) : (
-          teams.map(t => {
+          filteredTeams.map(t => {
             let members = [];
             try { members = JSON.parse(t.members || "[]"); } catch(e) {}
             
@@ -168,9 +181,9 @@ export default function FoodDistribution({ hackathon }) {
             const totalCount = members.length;
             const isFullyCheckedIn = t.status === "Checked-In";
             const isPartiallyCheckedIn = t.status === "Partially Checked In";
-            const isPaid = t.food_purchased && t.food_payment_status === "Paid";
-            const isUnpaid = t.food_purchased && t.food_payment_status === "Unpaid";
-            const notIncluded = !t.food_purchased;
+            const isPaid = t.food_payment_status === "Paid";
+            const isUnpaid = !isPaid; // "Food Not Included" or missing is treated as Unpaid
+            const notIncluded = false; // We no longer show "Food Not Included"
             
             let couponsAvailable = 0;
             let couponsDistributed = 0;

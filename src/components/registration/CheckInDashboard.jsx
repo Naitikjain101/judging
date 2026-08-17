@@ -13,7 +13,7 @@ import TeamDetailsDrawer from "./TeamDetailsDrawer";
 export default function CheckInDashboard({ hackathon }) {
   const hackathonId = hackathon.id;
   const [query, setQuery] = useState("");
-  const [teams, setTeams] = useState([]);
+  const [allTeams, setAllTeams] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [processingId, setProcessingId] = useState(null);
@@ -23,30 +23,39 @@ export default function CheckInDashboard({ hackathon }) {
     if (!hackathonId) return;
     setLoading(true);
     setError(null);
-    const res = await searchTeams(hackathonId, query);
+    const res = await searchTeams(hackathonId, "");
     if (res.error) {
       setError(res.error);
       toast.error(res.error);
     } else {
-      setTeams(res.teams || []);
+      setAllTeams(res.teams || []);
     }
     setLoading(false);
-  }, [hackathonId, query]);
+  }, [hackathonId]);
 
-  // Debounced search
   useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchTeams();
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [query, fetchTeams]);
+    fetchTeams();
+  }, [fetchTeams]);
+
+  // Client-side search
+  const filteredTeams = useMemo(() => {
+    if (!query.trim()) return allTeams;
+    const lower = query.toLowerCase();
+    return allTeams.filter(t => 
+      t.name?.toLowerCase().includes(lower) || 
+      t.team_code?.toLowerCase().includes(lower) || 
+      t.leader_name?.toLowerCase().includes(lower) || 
+      t.phone?.includes(lower) ||
+      t.email?.toLowerCase().includes(lower)
+    );
+  }, [allTeams, query]);
 
   const handleCheckInFull = async (teamId, members) => {
     setProcessingId(teamId);
     
     // Optimistic Update
-    const previousTeams = [...teams];
-    setTeams(teams.map(t => {
+    const previousTeams = [...allTeams];
+    setAllTeams(allTeams.map(t => {
       if (t.id === teamId) {
         const presentCount = members.filter(m => m.status === 'Present').length;
         const totalCount = members.length;
@@ -75,10 +84,10 @@ export default function CheckInDashboard({ hackathon }) {
     
     if (res.error) {
       toast.error(res.error);
-      setTeams(previousTeams); // Rollback
+      setAllTeams(previousTeams); // Rollback
     } else {
       // Update with the real team_number and table_number returned from backend
-      setTeams(currentTeams => currentTeams.map(t => {
+      setAllTeams(currentTeams => currentTeams.map(t => {
         if (t.id === teamId) {
           return {
             ...t,
@@ -109,8 +118,8 @@ export default function CheckInDashboard({ hackathon }) {
     setProcessingId(team.id);
     
     // Optimistic Rollback
-    const previousTeams = [...teams];
-    setTeams(teams.map(t => {
+    const previousTeams = [...allTeams];
+    setAllTeams(allTeams.map(t => {
       if (t.id === team.id) {
         let updatedMembers = t.members;
         try {
@@ -134,20 +143,20 @@ export default function CheckInDashboard({ hackathon }) {
     
     if (res.error) {
       toast.error(res.error);
-      setTeams(previousTeams); // Revert rollback on failure
+      setAllTeams(previousTeams); // Revert rollback on failure
     } else {
       toast.success("Check-in undone.");
     }
   };
 
   const stats = {
-    total: teams.length,
-    checkedIn: teams.filter(t => t.status === "Checked-In").length,
-    partial: teams.filter(t => t.status === "Partially Checked In").length,
-    pending: teams.filter(t => t.status === "Registered").length
+    total: allTeams.length,
+    checkedIn: allTeams.filter(t => t.status === "Checked-In").length,
+    partial: allTeams.filter(t => t.status === "Partially Checked In").length,
+    pending: allTeams.filter(t => t.status === "Registered").length
   };
   
-  const recentCheckIns = [...teams]
+  const recentCheckIns = [...allTeams]
     .filter(t => t.status === "Checked-In" && t.arrival_time)
     .sort((a, b) => new Date(b.arrival_time) - new Date(a.arrival_time))
     .slice(0, 10);
@@ -215,12 +224,12 @@ export default function CheckInDashboard({ hackathon }) {
                 </tr>
               </thead>
               <tbody>
-                {loading && teams.length === 0 ? (
+                {loading && allTeams.length === 0 ? (
                   <tr><td colSpan={5} className="text-center muted" style={{ padding: '3rem' }}>Searching...</td></tr>
-                ) : teams.length === 0 && !error ? (
+                ) : filteredTeams.length === 0 && !error ? (
                   <tr><td colSpan={5} className="text-center muted" style={{ padding: '3rem' }}>No teams found.</td></tr>
                 ) : (
-                  teams.map((t) => {
+                  filteredTeams.map((t) => {
                     const isCheckedIn = t.status === "Checked-In";
                     const isPartiallyCheckedIn = t.status === "Partially Checked In";
                     let statusColor = '';

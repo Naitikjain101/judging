@@ -20,6 +20,7 @@ export default function JudgesPanel({ hackathonId, judges }) {
   const [error, setError] = useState(null);
   const [defaults, setDefaults] = useState({ code: randomCode(), password: randomPassword() });
   const [copiedId, setCopiedId] = useState(null);
+  const [newlyCreated, setNewlyCreated] = useState(null);
 
   const handleCopy = (text, id) => {
     navigator.clipboard.writeText(text);
@@ -35,6 +36,11 @@ export default function JudgesPanel({ hackathonId, judges }) {
       setError(res.error);
     } else {
       setError(null);
+      setNewlyCreated({
+        name: formData.get("name"),
+        code: formData.get("judgeCode"),
+        password: formData.get("password")
+      });
       e.target.reset();
       setDefaults({ code: randomCode(), password: randomPassword() });
       router.refresh();
@@ -76,7 +82,44 @@ export default function JudgesPanel({ hackathonId, judges }) {
           </p>
             <SubmitButton pendingText="Adding…">Add judge</SubmitButton>
           </form>
-          <CsvImportJudges hackathonId={hackathonId} />
+          <div style={{ flex: 1, minWidth: 240, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <CsvImportJudges hackathonId={hackathonId} />
+            
+            {newlyCreated && (
+              <div style={{ padding: 16, background: 'var(--success-soft)', border: '1px solid var(--success)', borderRadius: 8 }}>
+                <h4 style={{ color: 'var(--success)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Check size={18} /> Judge Created Successfully
+                </h4>
+                <div style={{ display: 'grid', gap: 8, marginBottom: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span className="muted">Judge ID:</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span className="mono" style={{ fontWeight: 600 }}>{newlyCreated.code}</span>
+                      <button onClick={() => handleCopy(newlyCreated.code, 'new-code')} className="btn btn-secondary btn-sm" style={{ padding: '2px 6px' }}>
+                        {copiedId === 'new-code' ? <Check size={12} /> : <Copy size={12} />} Copy
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span className="muted">Password:</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span className="mono" style={{ fontWeight: 600 }}>{newlyCreated.password}</span>
+                      <button onClick={() => handleCopy(newlyCreated.password, 'new-pass')} className="btn btn-secondary btn-sm" style={{ padding: '2px 6px' }}>
+                        {copiedId === 'new-pass' ? <Check size={12} /> : <Copy size={12} />} Copy
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => handleCopy(`Judge ID: ${newlyCreated.code}\nPassword: ${newlyCreated.password}`, 'new-all')} 
+                  className="btn btn-primary" 
+                  style={{ width: '100%', display: 'flex', justifyContent: 'center', gap: 8 }}
+                >
+                  {copiedId === 'new-all' ? <Check size={16} /> : <Copy size={16} />} Copy Login Credentials
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

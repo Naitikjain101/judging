@@ -51,7 +51,7 @@ export async function searchTeams(hackathonId, query) {
   return { teams: data };
 }
 
-export async function collectPayment(teamId, hackathonId) {
+export async function collectPayment(teamId, hackathonId, amount) {
   const supabase = await createPortalClient("volunteer");
 
   const volCheck = await getVolunteerHackathon(supabase);
@@ -64,18 +64,23 @@ export async function collectPayment(teamId, hackathonId) {
 
   const { data: team, error: teamErr } = await admin
     .from("teams")
-    .select("id, food_purchased, food_payment_status")
+    .select("id, food_payment_status")
     .eq("id", teamId)
     .eq("hackathon_id", hackathonId)
     .single();
 
   if (teamErr || !team) return { error: "Team not found in this hackathon." };
-  if (!team.food_purchased) return { error: "Team did not request food." };
   if (team.food_payment_status === "Paid") return { error: "Team has already paid." };
 
   const { error: updateErr } = await admin
     .from("teams")
-    .update({ food_payment_status: "Paid" })
+    .update({ 
+      food_payment_status: "Paid",
+      food_payment_source: "FOOD_DESK",
+      food_payment_amount: amount,
+      food_payment_collected_at: new Date().toISOString(),
+      food_payment_collected_by: volCheck.userId
+    })
     .eq("id", teamId)
     .eq("hackathon_id", hackathonId);
 
