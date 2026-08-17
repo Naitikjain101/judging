@@ -43,22 +43,61 @@ export default function CheckInDashboard({ hackathon }) {
 
   const handleCheckInFull = async (teamId, members) => {
     setProcessingId(teamId);
-    const updatedMembers = members.map(m => ({ ...m, status: 'Present' }));
-    const res = await checkInTeam(teamId, hackathonId, updatedMembers);
+    
+    // Optimistic Update
+    const previousTeams = [...teams];
+    setTeams(teams.map(t => {
+      if (t.id === teamId) {
+        const presentCount = members.filter(m => m.status === 'Present').length;
+        const totalCount = members.length;
+        let newStatus = "Registered";
+        if (totalCount > 0) {
+          if (presentCount === 0) newStatus = "Registered";
+          else if (presentCount < totalCount) newStatus = "Partially Checked In";
+          else newStatus = "Checked-In";
+        } else {
+          newStatus = "Checked-In";
+        }
+        return { 
+          ...t, 
+          status: newStatus, 
+          members: JSON.stringify(members),
+          // We don't have the table number yet, but the UI can just show a temporary one or wait for the real one
+        };
+      }
+      return t;
+    }));
+    
+    setSelectedTeam(null);
+
+    const res = await checkInTeam(teamId, hackathonId, members);
     setProcessingId(null);
     
     if (res.error) {
       toast.error(res.error);
+      setTeams(previousTeams); // Rollback
     } else {
+      // Update with the real team_number and table_number returned from backend
+      setTeams(currentTeams => currentTeams.map(t => {
+        if (t.id === teamId) {
+          return {
+            ...t,
+            status: res.status,
+            team_number: res.team_number || t.team_number,
+            table_number: res.table_number || t.table_number,
+            arrival_time: t.arrival_time || new Date().toISOString()
+          };
+        }
+        return t;
+      }));
+      
       if (res.status === 'Checked-In') {
         toast.success(`Fully checked in! Team: ${res.team_number}, Table: ${res.table_number}`);
       } else if (res.status === 'Partially Checked In') {
-        toast.success(`Partially checked in. Team: ${res.team_number}, Table: ${res.table_number}`);
+        toast.success(`Partially checked in. Team: ${res.team_number || 'Pending'}, Table: ${res.table_number || 'Pending'}`);
       } else {
         toast.success("Check-in updated.");
       }
-      setSelectedTeam(null);
-      fetchTeams();
     }
   };
 
@@ -68,14 +107,36 @@ export default function CheckInDashboard({ hackathon }) {
     if (!confirm(`Undo check-in for ${team.name}? This removes their team and table number.`)) return;
     
     setProcessingId(team.id);
+    
+    // Optimistic Rollback
+    const previousTeams = [...teams];
+    setTeams(teams.map(t => {
+      if (t.id === team.id) {
+        let updatedMembers = t.members;
+        try {
+          const parsed = JSON.parse(t.members || "[]");
+          updatedMembers = JSON.stringify(parsed.map(m => ({ ...m, status: 'Pending' })));
+        } catch(e) {}
+        return { 
+          ...t, 
+          status: 'Registered', 
+          team_number: null, 
+          table_number: null, 
+          arrival_time: null,
+          members: updatedMembers
+        };
+      }
+      return t;
+    }));
+
     const res = await undoCheckIn(team.id, hackathonId);
     setProcessingId(null);
     
     if (res.error) {
       toast.error(res.error);
+      setTeams(previousTeams); // Revert rollback on failure
     } else {
       toast.success("Check-in undone.");
-      fetchTeams();
     }
   };
 

@@ -33,28 +33,54 @@ export default function FoodDistribution({ hackathon }) {
 
   const handleIssueCoupon = async (teamId, memberIndex) => {
     setProcessingId(`${teamId}-${memberIndex}`);
+    
+    // Optimistic Update
+    const previousTeams = [...teams];
+    setTeams(teams.map(t => {
+      if (t.id === teamId) {
+        let updatedMembers = [];
+        try { updatedMembers = JSON.parse(t.members || "[]"); } catch(e) {}
+        if (updatedMembers[memberIndex]) {
+          updatedMembers[memberIndex].food_issued = true;
+          updatedMembers[memberIndex].food_issued_at = new Date().toISOString();
+        }
+        return { ...t, members: JSON.stringify(updatedMembers), food_issued: true };
+      }
+      return t;
+    }));
+
     const res = await issueMemberCoupon(teamId, hackathonId, memberIndex);
     setProcessingId(null);
     
     if (res.error) {
       toast.error(res.error);
+      setTeams(previousTeams); // Rollback
     } else {
       toast.success("Coupon distributed successfully!");
-      fetchTeams();
     }
   };
 
   const handleCollectPayment = async (team) => {
     if (!confirm(`Confirm payment collected for team ${team.name}?`)) return;
     setProcessingId(`payment-${team.id}`);
+    
+    // Optimistic Update
+    const previousTeams = [...teams];
+    setTeams(teams.map(t => {
+      if (t.id === team.id) {
+        return { ...t, food_payment_status: "Paid" };
+      }
+      return t;
+    }));
+
     const res = await collectPayment(team.id, hackathonId);
     setProcessingId(null);
 
     if (res.error) {
       toast.error(res.error);
+      setTeams(previousTeams); // Rollback
     } else {
       toast.success(`Payment collected! Team ${team.name} is now eligible for food.`);
-      fetchTeams();
     }
   };
 
