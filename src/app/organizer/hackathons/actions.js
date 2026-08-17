@@ -97,6 +97,10 @@ export async function addTeam(hackathonId, formData) {
   const leaderPhone = sanitize(formData.get("leaderPhone")?.toString().trim());
   const members = formData.get("members")?.toString() || "[]";
   const teamCode = sanitize(formData.get("teamCode")?.toString().trim().toUpperCase());
+  
+  const foodPurchased = formData.get("foodPurchased") === "true";
+  const foodPaymentStatus = formData.get("foodPaymentStatus")?.toString().trim() || "Unpaid";
+  const foodQuantity = parseInt(formData.get("foodQuantity")?.toString().trim() || "0", 10);
 
   if (!name) return { error: "Team name is required." };
   if (!leaderName) return { error: "Leader name is required." };
@@ -122,7 +126,10 @@ export async function addTeam(hackathonId, formData) {
       team_code: teamCode,
       leader_name: leaderName,
       email: leaderEmail,
-      phone: leaderPhone
+      phone: leaderPhone,
+      food_purchased: foodPurchased,
+      food_payment_status: foodPaymentStatus,
+      food_quantity: foodQuantity
     });
 
   if (error) return { error: error.message };
@@ -151,8 +158,14 @@ export async function importTeamsCSV(hackathonId, rows) {
     .map((r) => ({
       hackathon_id: hackathonId,
       name: sanitize(r.name.trim()),
-      members: sanitize(r.members || ""),
+      members: sanitize(r.members || "[]"),
       team_code: sanitize(r.teamCode || ""),
+      leader_name: sanitize(r.leaderName || ""),
+      email: sanitize(r.leaderEmail || ""),
+      phone: sanitize(r.leaderPhone || ""),
+      food_purchased: !!r.foodPurchased,
+      food_payment_status: sanitize(r.foodPaymentStatus || "Unpaid"),
+      food_quantity: parseInt(r.foodQuantity || "0", 10)
     }));
 
   if (payload.length === 0) return { error: "No valid rows found." };
@@ -197,6 +210,10 @@ export async function editTeam(hackathonId, teamId, formData) {
   const members = formData.get("members")?.toString() || "[]";
   const teamCode = sanitize(formData.get("teamCode")?.toString().trim().toUpperCase());
 
+  const foodPurchased = formData.get("foodPurchased") === "true";
+  const foodPaymentStatus = formData.get("foodPaymentStatus")?.toString().trim() || "Unpaid";
+  const foodQuantity = parseInt(formData.get("foodQuantity")?.toString().trim() || "0", 10);
+
   if (!name) return { error: "Team name is required." };
   if (!leaderName) return { error: "Leader name is required." };
   if (!teamCode) return { error: "Team ID is required." };
@@ -220,7 +237,10 @@ export async function editTeam(hackathonId, teamId, formData) {
       team_code: teamCode,
       leader_name: leaderName,
       email: leaderEmail,
-      phone: leaderPhone
+      phone: leaderPhone,
+      food_purchased: foodPurchased,
+      food_payment_status: foodPaymentStatus,
+      food_quantity: foodQuantity
     })
     .eq("id", teamId)
     .eq("hackathon_id", hackathonId);
